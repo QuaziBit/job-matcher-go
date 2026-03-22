@@ -1,0 +1,84 @@
+{{template "base.html" .}}
+{{define "title"}}Jobs — Job Matcher{{end}}
+{{define "nav_jobs"}}active{{end}}
+
+{{define "content"}}
+<div class="page-header">
+  <h2>Job Tracker</h2>
+  <p>Add a job by URL or paste the description directly.</p>
+</div>
+
+<div style="margin-bottom: 12px;">
+  <div class="llm-toggle" style="display:inline-flex;">
+    <input type="radio" name="add-mode" id="mode-url" value="url" checked />
+    <label for="mode-url">URL</label>
+    <input type="radio" name="add-mode" id="mode-paste" value="paste" />
+    <label for="mode-paste">Paste</label>
+  </div>
+</div>
+
+<form id="add-job-form" class="add-job-bar">
+  <input type="text" name="url" placeholder="https://jobs.example.com/posting/12345"
+         autocomplete="off" style="font-family: var(--font-mono); font-size: 12px;" />
+  <button type="submit" class="btn btn-primary">Add Job</button>
+</form>
+
+<div id="paste-job-form-wrap" class="card hidden" style="margin-bottom: 20px;">
+  <div class="form-grid" style="margin-bottom: 14px;">
+    <div class="form-row" style="margin:0;">
+      <label>Job Title</label>
+      <input type="text" id="paste-title" placeholder="e.g. DevSecOps Engineer" />
+    </div>
+    <div class="form-row" style="margin:0;">
+      <label>Company</label>
+      <input type="text" id="paste-company" placeholder="e.g. Acme Federal" />
+    </div>
+  </div>
+  <div class="form-row">
+    <label>Job Description</label>
+    <textarea id="paste-description" placeholder="Paste the full job description here…"
+              style="min-height: 160px; font-size: 12px;"></textarea>
+  </div>
+  <button class="btn btn-primary" id="paste-submit-btn" onclick="addJobManual()">Add Job</button>
+</div>
+
+{{if .Jobs}}
+  {{range .Jobs}}
+  <a href="/job/{{.ID}}" class="job-item" style="text-decoration:none;">
+    <div>
+      {{if .AdjustedScore}}
+        <div class="score-badge score-{{.AdjustedScore}}">{{.AdjustedScore}}</div>
+      {{else if .BestScore}}
+        <div class="score-badge score-{{.BestScore}}">{{.BestScore}}</div>
+      {{else}}
+        <div class="score-badge score-none">—</div>
+      {{end}}
+    </div>
+    <div class="job-item-info">
+      <div class="job-title">{{if .Title}}{{.Title}}{{else}}Untitled Job{{end}}</div>
+      <div class="job-meta">
+        {{if .Company}}{{.Company}}{{end}}
+        {{if and .Company .Location}} · {{end}}
+        {{if .Location}}{{.Location}}{{end}}
+        {{if and (empty .Company) (empty .Location)}}
+          {{if .IsManual}}pasted description{{else}}{{slice .URL 0 60}}…{{end}}
+        {{end}}
+      </div>
+    </div>
+    <div class="job-item-right">
+      {{if .IsManual}}
+        <span class="provider-tag">manual</span>
+      {{else if .Provider}}
+        <span class="provider-tag">{{.Provider}}</span>
+      {{end}}
+      <span class="status-badge status-{{.Status}}">{{.Status}}</span>
+    </div>
+  </a>
+  {{end}}
+{{else}}
+  <div class="empty">
+    <div class="empty-icon">⬡</div>
+    <p>No jobs tracked yet.<br>Add a job URL or paste a description above.</p>
+  </div>
+{{end}}
+{{end}}

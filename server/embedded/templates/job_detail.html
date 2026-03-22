@@ -1,0 +1,184 @@
+{{template "base.html" .}}
+{{define "title"}}{{if .Job.Title}}{{.Job.Title}}{{else}}Job Detail{{end}} — Job Matcher{{end}}
+{{define "nav_jobs"}}active{{end}}
+
+{{define "content"}}
+<div style="margin-bottom: 20px;">
+  <a href="/" class="btn btn-ghost btn-sm">← Back</a>
+</div>
+
+<div class="page-header">
+  <div class="flex items-center gap-10" style="margin-bottom: 8px;">
+    <h2 style="flex:1; min-width:0;">{{if .Job.Title}}{{.Job.Title}}{{else}}Untitled Job{{end}}</h2>
+    <span id="status-badge" class="status-badge status-{{.Application.Status}}">
+      {{.Application.Status}}
+    </span>
+    <button class="btn btn-danger btn-sm" onclick="deleteJob({{.Job.ID}})">Delete</button>
+  </div>
+  <div class="flex gap-10 text-dim text-mono text-xs">
+    {{if .Job.Company}}<span>{{.Job.Company}}</span>{{end}}
+    {{if .Job.Location}}<span>· {{.Job.Location}}</span>{{end}}
+    {{if not (hasPrefix .Job.URL "manual://")}}
+      <span>· <a href="{{.Job.URL}}" target="_blank" style="color: var(--amber);">View Original ↗</a></span>
+    {{else}}
+      <span style="color: var(--text-mute);">· pasted description</span>
+    {{end}}
+  </div>
+</div>
+
+<div class="tab-container">
+  <div class="tabs">
+    <button class="tab active" data-tab="analysis">Analysis</button>
+    <button class="tab" data-tab="application">Application</button>
+    <button class="tab" data-tab="description">Job Description</button>
+  </div>
+
+  <!-- Analysis Tab -->
+  <div class="tab-content active" data-tab-content="analysis">
+    <div class="card mb-16">
+      <div class="section-header">
+        <span class="section-title">Run New Analysis</span>
+      </div>
+      <div class="form-grid" style="margin-bottom: 14px;">
+        <div class="form-row" style="margin:0;">
+          <label>Resume Version</label>
+          {{if .Resumes}}
+            <select id="analyze-resume">
+              {{range .Resumes}}
+              <option value="{{.ID}}">{{.Label}}</option>
+              {{end}}
+            </select>
+          {{else}}
+            <div class="text-dim text-sm" style="padding: 8px 0;">
+              No resumes yet — <a href="/resumes" style="color:var(--amber);">add one first</a>
+            </div>
+          {{end}}
+        </div>
+        <div class="form-row" style="margin:0;">
+          <label>LLM Provider</label>
+          <div class="llm-toggle">
+            <input type="radio" name="provider" id="p-anthropic" value="anthropic" checked />
+            <label for="p-anthropic">Anthropic</label>
+            <input type="radio" name="provider" id="p-ollama" value="ollama" />
+            <label for="p-ollama">Ollama ({{.OllamaModel}})</label>
+          </div>
+        </div>
+      </div>
+      <button id="analyze-btn" class="btn btn-primary"
+              onclick="analyzeJob({{.Job.ID}})"
+              {{if empty .Resumes}}disabled{{end}}>Run Analysis</button>
+    </div>
+
+    {{if .Analyses}}
+      <div class="section-title" style="margin-bottom: 12px;">Past Analyses</div>
+      {{range .Analyses}}
+      <div class="analysis-block" id="analysis-{{.ID}}">
+        <div class="analysis-header">
+          <div class="score-adjusted-wrap">
+            <div class="score-badge score-{{.Score}}" title="Raw LLM score">{{.Score}}</div>
+            {{if ne .AdjustedScore .Score}}
+              <span class="score-arrow">→</span>
+              <div class="score-badge score-{{.AdjustedScore}}" title="Penalty-adjusted score">{{.AdjustedScore}}</div>
+              <span class="score-diff score-diff-down">-{{sub .Score .AdjustedScore}}</span>
+            {{else}}
+              <span class="score-diff score-diff-same">no penalty</span>
+            {{end}}
+          </div>
+          <div class="score-meter" id="meter-{{.ID}}"></div>
+          <div class="analysis-meta" style="flex:1;">
+            {{.ResumeLabel}} · {{.LLMProvider}}{{if .LLMModel}} ({{.LLMModel}}){{end}} · {{.CreatedAt.Format "2006-01-02 15:04"}}
+          </div>
+          <button class="btn btn-danger btn-sm" style="margin-left:10px;flex-shrink:0;"
+                  onclick="deleteAnalysis({{.ID}})" title="Delete this analysis">✕</button>
+        </div>
+
+        {{if .PenaltyBreakdown.TotalPenalty}}
+        <div class="penalty-row">
+          {{if .PenaltyBreakdown.Blockers}}<span class="penalty-tag penalty-blocker">{{.PenaltyBreakdown.Blockers}} blocker{{if gt .PenaltyBreakdown.Blockers 1}}s{{end}} −{{.PenaltyBreakdown.BlockerPenalty}}</span>{{end}}
+          {{if .PenaltyBreakdown.Majors}}<span class="penalty-tag penalty-major">{{.PenaltyBreakdown.Majors}} major{{if gt .PenaltyBreakdown.Majors 1}}s{{end}} −{{.PenaltyBreakdown.MajorPenalty}}</span>{{end}}
+          {{if .PenaltyBreakdown.Minors}}<span class="penalty-tag penalty-minor">{{.PenaltyBreakdown.Minors}} minor{{if gt .PenaltyBreakdown.Minors 1}}s{{end}} −{{.PenaltyBreakdown.MinorPenalty}}</span>{{end}}
+          {{if .PenaltyBreakdown.CountPenalty}}<span class="penalty-tag penalty-count">{{len .MissingSkills}} gaps −{{.PenaltyBreakdown.CountPenalty}}</span>{{end}}
+        </div>
+        {{end}}
+
+        {{if .MatchedSkills}}
+        <div style="margin-top: 10px;">
+          <div class="text-xs text-dim" style="margin-bottom: 4px;">Matched skills</div>
+          <div class="pill-list">
+            {{range .MatchedSkills}}<span class="pill pill-green">{{.}}</span>{{end}}
+          </div>
+        </div>
+        {{end}}
+
+        {{if .MissingSkills}}
+        <div style="margin-top: 10px;">
+          <div class="text-xs text-dim" style="margin-bottom: 4px;">Missing / gaps</div>
+          <div class="pill-list">
+            {{range .MissingSkills}}
+              <span class="pill {{if eq .Severity "blocker"}}pill-red{{else if eq .Severity "major"}}pill-orange{{else}}pill-dim{{end}}"
+                    title="{{.Severity}}">{{.Skill}}</span>
+            {{end}}
+          </div>
+        </div>
+        {{end}}
+
+        {{if .Reasoning}}
+        <div class="reasoning">{{.Reasoning}}</div>
+        {{end}}
+      </div>
+      {{end}}
+    {{else}}
+      <div class="empty" style="padding: 32px 0;">
+        <p>No analyses yet. Select a resume and run your first analysis above.</p>
+      </div>
+    {{end}}
+  </div>
+
+  <!-- Application Tab -->
+  <div class="tab-content" data-tab-content="application">
+    <div class="card">
+      <div class="form-row">
+        <label>Application Status</label>
+        <select id="app-status">
+          {{range seq "not_applied" "applied" "interviewing" "offered" "rejected"}}
+          <option value="{{.}}" {{if eq . $.Application.Status}}selected{{end}}>{{.}}</option>
+          {{end}}
+        </select>
+      </div>
+      <div class="section-title" style="margin: 18px 0 12px;">Recruiter Info</div>
+      <div class="form-grid">
+        <div class="form-row" style="margin:0 0 14px 0;">
+          <label>Name</label>
+          <input type="text" id="recruiter-name" value="{{.Application.RecruiterName}}" placeholder="Jane Smith" />
+        </div>
+        <div class="form-row" style="margin:0 0 14px 0;">
+          <label>Email</label>
+          <input type="email" id="recruiter-email" value="{{.Application.RecruiterEmail}}" placeholder="jane@company.com" />
+        </div>
+        <div class="form-row" style="margin:0 0 14px 0;">
+          <label>Phone</label>
+          <input type="text" id="recruiter-phone" value="{{.Application.RecruiterPhone}}" placeholder="+1 (555) 000-0000" />
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Notes</label>
+        <textarea id="app-notes" placeholder="Follow-up dates, compensation, interview notes…">{{.Application.Notes}}</textarea>
+      </div>
+      <button id="save-app-btn" class="btn btn-primary" onclick="saveApplication({{.Job.ID}})">Save</button>
+    </div>
+  </div>
+
+  <!-- Description Tab -->
+  <div class="tab-content" data-tab-content="description">
+    <div class="card">
+      <div class="flex justify-between items-center mb-16">
+        <span class="section-title">Raw Scraped Description</span>
+        <button class="btn btn-ghost btn-sm" onclick="toggleDesc({{.Job.ID}})">Toggle</button>
+      </div>
+      <div id="desc-box" class="desc-box hidden"></div>
+    </div>
+  </div>
+</div>
+{{end}}
+
+
