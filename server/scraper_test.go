@@ -243,3 +243,45 @@ func TestScrapeJob_NetworkErrorReturnsError(t *testing.T) {
 		t.Error("expected error for unreachable server")
 	}
 }
+
+// ── Additional edge cases ─────────────────────────────────────────────────────
+
+func TestScrapeJob_EmptyBodyReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		// Write nothing
+	}))
+	defer srv.Close()
+
+	_, _, _, _, err := ScrapeJob(srv.URL)
+	if err == nil {
+		t.Error("expected error for empty page body")
+	}
+}
+
+func TestScrapeJob_MalformedHTMLStillExtracts(t *testing.T) {
+	// Unclosed tags and broken structure — should still extract something
+	html := `<html><body>
+		<h1>Senior Go Developer
+		<div>Acme Corp
+		<p>We are looking for an experienced Go developer to join our team.
+		You will work on distributed systems and microservices.
+		Strong knowledge of Go, Docker, and Kubernetes required.
+		Remote work available. Competitive salary offered.
+		Please apply with your resume and cover letter today.
+	</body>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(html))
+	}))
+	defer srv.Close()
+
+	_, _, _, desc, err := ScrapeJob(srv.URL)
+	if err != nil {
+		t.Fatalf("unexpected error on malformed HTML: %v", err)
+	}
+	if desc == "" {
+		t.Error("expected non-empty description from malformed HTML")
+	}
+}

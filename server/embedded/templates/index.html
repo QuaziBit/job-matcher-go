@@ -42,43 +42,87 @@
   <button class="btn btn-primary" id="paste-submit-btn" onclick="addJobManual()">Add Job</button>
 </div>
 
-{{if .Jobs}}
-  {{range .Jobs}}
-  <a href="/job/{{.ID}}" class="job-item" style="text-decoration:none;">
-    <div>
-      {{if .AdjustedScore}}
-        <div class="score-badge score-{{.AdjustedScore}}">{{.AdjustedScore}}</div>
-      {{else if .BestScore}}
-        <div class="score-badge score-{{.BestScore}}">{{.BestScore}}</div>
-      {{else}}
-        <div class="score-badge score-none">—</div>
-      {{end}}
-    </div>
-    <div class="job-item-info">
-      <div class="job-title">{{if .Title}}{{.Title}}{{else}}Untitled Job{{end}}</div>
-      <div class="job-meta">
-        {{if .Company}}{{.Company}}{{end}}
-        {{if and .Company .Location}} · {{end}}
-        {{if .Location}}{{.Location}}{{end}}
-        {{if and (empty .Company) (empty .Location)}}
-          {{if .IsManual}}pasted description{{else}}{{slice .URL 0 60}}…{{end}}
-        {{end}}
-      </div>
-    </div>
-    <div class="job-item-right">
-      {{if .IsManual}}
-        <span class="provider-tag">manual</span>
-      {{else if .Provider}}
-        <span class="provider-tag">{{.Provider}}</span>
-      {{end}}
-      <span class="status-badge status-{{.Status}}">{{.Status}}</span>
-    </div>
-  </a>
-  {{end}}
-{{else}}
-  <div class="empty">
-    <div class="empty-icon">⬡</div>
-    <p>No jobs tracked yet.<br>Add a job URL or paste a description above.</p>
+<!-- Search and filter bar -->
+<div class="filter-bar">
+  <input type="text" id="filter-search" placeholder="Search title or company…" autocomplete="off" />
+  <select id="filter-status">
+    <option value="">All Statuses</option>
+    <option value="not_applied">Not Applied</option>
+    <option value="applied">Applied</option>
+    <option value="interviewing">Interviewing</option>
+    <option value="offered">Offered</option>
+    <option value="rejected">Rejected</option>
+  </select>
+  <select id="filter-score">
+    <option value="">Any Score</option>
+    <option value="5">5 only</option>
+    <option value="4">4 or higher</option>
+    <option value="3">3 or higher</option>
+    <option value="2">2 or higher</option>
+    <option value="1">1 or higher</option>
+    <option value="0">Not scored</option>
+  </select>
+  <select id="filter-provider">
+    <option value="">All Providers</option>
+    <option value="anthropic">Anthropic</option>
+    <option value="ollama">Ollama</option>
+    <option value="manual">Manual</option>
+  </select>
+  <button class="btn btn-ghost btn-sm" onclick="clearFilters()" id="clear-btn" style="display:none;">
+    ✕ Clear
+  </button>
+</div>
+
+<!-- Jobs list — populated by JS -->
+<div id="jobs-list"></div>
+
+<!-- Pagination bar -->
+<div class="pagination-bar" id="pagination-bar" style="display:none;">
+  <span class="pagination-info" id="pagination-info"></span>
+  <div class="pagination-controls">
+    <button class="btn btn-ghost btn-sm" id="prev-btn" onclick="changePage(-1)" disabled>← Prev</button>
+    <span id="page-indicator" class="pagination-pages"></span>
+    <button class="btn btn-ghost btn-sm" id="next-btn" onclick="changePage(1)" disabled>Next →</button>
   </div>
-{{end}}
+  <select id="per-page" onchange="changePerPage()" class="pagination-perpage">
+    <option value="5">5 per page</option>
+    <option value="10">10 per page</option>
+    <option value="25" selected>25 per page</option>
+    <option value="50">50 per page</option>
+    <option value="0">All</option>
+  </select>
+</div>
+
+<!-- Loading indicator -->
+<div id="jobs-loading" class="empty" style="display:none;">
+  <div class="empty-icon">⬡</div>
+  <p>Loading…</p>
+</div>
+
+<!-- Error state -->
+<div id="jobs-error" class="jobs-error hidden">
+  <div class="jobs-error-icon">✗</div>
+  <div>
+    <div class="jobs-error-title">Failed to load jobs</div>
+    <div class="jobs-error-text" id="jobs-error-text"></div>
+    <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="fetchJobs()">
+      ↺ Retry
+    </button>
+  </div>
+</div>
+
+<!-- No results -->
+<div id="no-results" class="empty hidden">
+  <div class="empty-icon">⬡</div>
+  <p>No jobs match your filters.<br>
+    <a href="#" onclick="clearFilters(); return false;" style="color:var(--amber);">Clear filters</a>
+  </p>
+</div>
+
+<!-- Empty state (no jobs at all) -->
+<div id="empty-state" class="empty hidden">
+  <div class="empty-icon">⬡</div>
+  <p>No jobs tracked yet.<br>Add a job URL or paste a description above.</p>
+</div>
+
 {{end}}

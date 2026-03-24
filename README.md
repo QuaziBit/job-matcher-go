@@ -58,6 +58,16 @@
 
 ---
 
+### PowerShell Permission Fix (Windows only)
+
+If you get an execution policy error in PowerShell, run this first:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+---
+
 ## First-Time Setup
 
 ### Step 1 — Clone

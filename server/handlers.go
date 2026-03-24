@@ -72,6 +72,7 @@ func registerRoutes(mux *http.ServeMux, cfg config.Config) {
 
 	mux.HandleFunc("/api/jobs/add-manual", handleAddJobManual)
 	mux.HandleFunc("/api/jobs/add", handleAddJob)
+	mux.HandleFunc("/api/jobs/list", handleJobsList)
 	mux.HandleFunc("/api/jobs/", handleJobActions)
 	mux.HandleFunc("/api/analyses/", handleAnalysisActions)
 	mux.HandleFunc("/api/resumes/add", handleAddResume)
@@ -139,19 +140,14 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	jobs, err := dbGetJobListItems()
-	if err != nil {
-		log.Printf("✗ dbGetJobListItems error: %v", err)
-		http.Error(w, "failed to load jobs", http.StatusInternalServerError)
-		return
-	}
 	resumes, err := dbGetResumes()
 	if err != nil {
 		log.Printf("✗ dbGetResumes error (index): %v", err)
 		http.Error(w, "failed to load resumes", http.StatusInternalServerError)
 		return
 	}
-	renderTemplate(w, "index.html", IndexView{Jobs: jobs, Resumes: resumes})
+	// Jobs list is loaded client-side via /api/jobs/list on page load
+	renderTemplate(w, "index.html", IndexView{Jobs: nil, Resumes: resumes})
 }
 
 func handleJobDetail(w http.ResponseWriter, r *http.Request) {
@@ -202,6 +198,115 @@ func handleResumes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	renderTemplate(w, "resumes.html", ResumesView{Resumes: resumes})
+}
+
+// ── Job list API (search + filter + pagination) ───────────────────────────────
+
+func handleJobsList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+
+	q := r.URL.Query()
+
+	// Validate and parse page
+	page := 1
+	if raw := q.Get("page"); raw != "" {
+		p, err := strconv.Atoi(raw)
+		if err != nil || p < 1 {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("invalid page %q — must be a positive integer", raw))
+			return
+		}
+		page = p
+	}
+
+	// Validate and parse per_page
+	perPage := 25
+	if raw := q.Get("per_page"); raw != "" {
+		p, err := strconv.Atoi(raw)
+		if err != nil || p < 0 {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("invalid per_page %q — must be 0 (all) or a positive integer", raw))
+			return
+		}
+		perPage = p
+	}
+
+	// Validate status
+	status := q.Get("status")
+	validStatuses := map[string]bool{
+		"": true, "not_applied": true, "applied": true,
+		"interviewing": true, "offered": true, "rejected": true,
+	}
+	if !validStatuses[status] {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("invalid status %q — must be one of: not_applied, applied, interviewing, offered, rejected", status))
+		return
+	}
+
+	// Validate score
+	score := q.Get("score")
+	validScores := map[string]bool{"": true, "0": true, "1": true, "2": true, "3": true, "4": true, "5": true}
+	if !validScores[score] {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("invalid score %q — must be one of: 0, 2, 3, 4, 5", score))
+		return
+	}
+
+	// Validate provider
+	provider := q.Get("provider")
+	validProviders := map[string]bool{"": true, "anthropic": true, "ollama": true, "manual": true}
+	if !validProviders[provider] {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("invalid provider %q — must be one of: anthropic, ollama, manual", provider))
+		return
+	}
+
+	f := JobFilters{
+		Search:   strings.TrimSpace(q.Get("search")),
+		Status:   status,
+		Score:    score,
+		Provider: provider,
+		Page:     page,
+		PerPage:  perPage,
+	}
+
+	log.Printf("→ /api/jobs/list page=%d per_page=%d search=%q status=%q score=%q provider=%q",
+		f.Page, f.PerPage, f.Search, f.Status, f.Score, f.Provider)
+
+	jobs, total, err := dbGetJobListItems(f)
+	if err != nil {
+		log.Printf("✗ dbGetJobListItems error: %v", err)
+		writeError(w, http.StatusInternalServerError,
+			"Failed to load jobs from database. Check the terminal for details.")
+		return
+	}
+
+	totalPages := 1
+	if perPage > 0 && total > 0 {
+		totalPages = (total + perPage - 1) / perPage
+	}
+
+	// Clamp page to valid range
+	if page > totalPages && totalPages > 0 {
+		log.Printf("→ page %d out of range (max %d) — clamping", page, totalPages)
+		page = totalPages
+	}
+
+	if jobs == nil {
+		jobs = []JobListItem{}
+	}
+
+	log.Printf("✓ /api/jobs/list total=%d page=%d/%d returned=%d", total, page, totalPages, len(jobs))
+	writeJSON(w, http.StatusOK, JobsListResponse{
+		Jobs:       jobs,
+		Total:      total,
+		Page:       page,
+		PerPage:    perPage,
+		TotalPages: totalPages,
+	})
 }
 
 // ── Job API ───────────────────────────────────────────────────────────────────

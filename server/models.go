@@ -68,11 +68,11 @@ type Application struct {
 
 type JobListItem struct {
 	Job
-	Status        string
-	BestScore     *int
-	AdjustedScore *int
-	Provider      string
-	IsManual      bool
+	Status        string `json:"status"`
+	BestScore     *int   `json:"best_score"`
+	AdjustedScore *int   `json:"adjusted_score"`
+	Provider      string `json:"provider"`
+	IsManual      bool   `json:"is_manual"`
 }
 
 type JobDetailView struct {
@@ -100,4 +100,23 @@ type APIError struct {
 
 type APIOK struct {
 	OK bool `json:"ok"`
+}
+
+// ── Pagination & filter models ────────────────────────────────────────────────
+
+type JobFilters struct {
+	Search   string
+	Status   string
+	Score    string // "", "0", "2", "3", "4", "5"
+	Provider string
+	Page     int
+	PerPage  int // 0 = all
+}
+
+type JobsListResponse struct {
+	Jobs       []JobListItem `json:"jobs"`
+	Total      int           `json:"total"`
+	Page       int           `json:"page"`
+	PerPage    int           `json:"per_page"`
+	TotalPages int           `json:"total_pages"`
 }

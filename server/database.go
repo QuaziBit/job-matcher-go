@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -133,8 +134,60 @@ func dbDeleteResume(id int64) error {
 
 // ── Jobs ──────────────────────────────────────────────────────────────────────
 
-func dbGetJobListItems() ([]JobListItem, error) {
-	rows, err := db.Query(`
+func dbGetJobListItems(f JobFilters) ([]JobListItem, int, error) {
+	// ── Build WHERE clause dynamically ───────────────────────────────────────
+	where := []string{}
+	args  := []interface{}{}
+
+	if f.Search != "" {
+		where = append(where, "(LOWER(j.title) LIKE ? OR LOWER(j.company) LIKE ?)")
+		like := "%" + strings.ToLower(f.Search) + "%"
+		args  = append(args, like, like)
+	}
+	if f.Status != "" {
+		where = append(where, "COALESCE(a.status, 'not_applied') = ?")
+		args  = append(args, f.Status)
+	}
+	if f.Provider != "" {
+		if f.Provider == "manual" {
+			where = append(where, "j.url LIKE 'manual://%'")
+		} else {
+			where = append(where,
+				"(SELECT llm_provider FROM analyses WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1) = ?")
+			args = append(args, f.Provider)
+		}
+	}
+	if f.Score != "" {
+		switch f.Score {
+		case "0": // not scored — no analyses at all
+			log.Printf("→ dbGetJobListItems: score filter = not scored")
+			where = append(where,
+				"(SELECT COUNT(*) FROM analyses WHERE job_id = j.id) = 0")
+		case "5": // exact match only
+			log.Printf("→ dbGetJobListItems: score filter = exactly 5")
+			where = append(where,
+				"COALESCE((SELECT adjusted_score FROM analyses WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1),"+
+					"(SELECT score FROM analyses WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1), 0) = 5")
+		default: // >= minimum, pass as integer
+			minScore, err := strconv.Atoi(f.Score)
+			if err != nil {
+				log.Printf("✗ dbGetJobListItems: invalid score filter %q: %v — ignoring", f.Score, err)
+			} else {
+				log.Printf("→ dbGetJobListItems: score filter >= %d", minScore)
+				where = append(where,
+					"COALESCE((SELECT adjusted_score FROM analyses WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1),"+
+						"(SELECT score FROM analyses WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1), 0) >= ?")
+				args = append(args, minScore)
+			}
+		}
+	}
+
+	whereSQL := ""
+	if len(where) > 0 {
+		whereSQL = "WHERE " + strings.Join(where, " AND ")
+	}
+
+	baseQuery := `
 		SELECT j.id, j.url, j.title, j.company, j.location, j.scraped_at,
 		       COALESCE(a.status, 'not_applied'),
 		       (SELECT score          FROM analyses WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1),
@@ -142,9 +195,35 @@ func dbGetJobListItems() ([]JobListItem, error) {
 		       (SELECT llm_provider   FROM analyses WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1)
 		FROM jobs j
 		LEFT JOIN applications a ON a.job_id = j.id
-		ORDER BY j.scraped_at DESC`)
+		` + whereSQL + `
+		ORDER BY j.scraped_at DESC`
+
+	// ── Count total matching rows ─────────────────────────────────────────────
+	countQuery := `SELECT COUNT(*) FROM jobs j LEFT JOIN applications a ON a.job_id = j.id ` + whereSQL
+	var total int
+	if err := db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count query: %w", err)
+	}
+
+	// ── Apply LIMIT / OFFSET ──────────────────────────────────────────────────
+	page    := f.Page
+	perPage := f.PerPage
+	if page < 1    { page = 1 }
+	if perPage < 0 { perPage = 0 }
+
+	paginatedArgs := append(args[:len(args):len(args)], args...)
+	paginatedArgs  = args
+
+	if perPage > 0 {
+		offset := (page - 1) * perPage
+		baseQuery += " LIMIT ? OFFSET ?"
+		paginatedArgs = append(args, perPage, offset)
+	}
+
+	// ── Execute main query ────────────────────────────────────────────────────
+	rows, err := db.Query(baseQuery, paginatedArgs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -158,7 +237,7 @@ func dbGetJobListItems() ([]JobListItem, error) {
 			&item.ID, &item.URL, &item.Title, &item.Company, &item.Location, &ts,
 			&item.Status, &score, &adjScore, &provider,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		item.ScrapedAt, _ = parseTS(ts)
 		if score.Valid {
@@ -175,7 +254,7 @@ func dbGetJobListItems() ([]JobListItem, error) {
 		item.IsManual = strings.HasPrefix(item.URL, "manual://")
 		items = append(items, item)
 	}
-	return items, nil
+	return items, total, nil
 }
 
 func dbGetJobByID(id int64) (*Job, error) {

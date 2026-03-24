@@ -407,7 +407,7 @@ func TestDBJobList_ReturnsAdjustedScore(t *testing.T) {
 		LLMProvider: "anthropic", LLMModel: "claude-opus-4-5",
 	})
 
-	items, err := dbGetJobListItems()
+	items, _, err := dbGetJobListItems(JobFilters{Page: 1, PerPage: 25})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -426,5 +426,462 @@ func TestDBJobList_ReturnsAdjustedScore(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected job to appear in list")
+	}
+}
+
+// ── JobList filters ───────────────────────────────────────────────────────────
+
+// helper: insert a job with an analysis in one call
+func insertJobWithAnalysis(t *testing.T, url, title, company, provider string, score, adjusted int) (int64, int64) {
+	t.Helper()
+	rid, _ := dbInsertResume("test-resume", "resume content")
+	jid, err := dbInsertJob(url, title, company, "DC", "job description")
+	if err != nil {
+		t.Fatalf("insertJobWithAnalysis: job insert failed: %v", err)
+	}
+	_, err = dbInsertAnalysis(Analysis{
+		JobID: jid, ResumeID: rid,
+		Score: score, AdjustedScore: adjusted,
+		LLMProvider: provider, LLMModel: "test-model",
+	})
+	if err != nil {
+		t.Fatalf("insertJobWithAnalysis: analysis insert failed: %v", err)
+	}
+	return jid, rid
+}
+
+func TestDBJobList_EmptyDBReturnsZero(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	items, total, err := dbGetJobListItems(JobFilters{Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("expected total 0, got %d", total)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected 0 items, got %d", len(items))
+	}
+}
+
+func TestDBJobList_EmptySearchReturnsAll(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	dbInsertJob("https://example.com/j1", "Go Engineer", "Acme", "DC", "desc")
+	dbInsertJob("https://example.com/j2", "Python Dev", "Globex", "VA", "desc")
+	dbInsertJob("https://example.com/j3", "DevSecOps", "Initech", "MD", "desc")
+
+	items, total, err := dbGetJobListItems(JobFilters{Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("expected total 3, got %d", total)
+	}
+	if len(items) != 3 {
+		t.Errorf("expected 3 items, got %d", len(items))
+	}
+}
+
+func TestDBJobList_SearchByTitle(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	dbInsertJob("https://example.com/j1", "Go Engineer", "Acme", "DC", "desc")
+	dbInsertJob("https://example.com/j2", "Python Developer", "Globex", "VA", "desc")
+	dbInsertJob("https://example.com/j3", "DevSecOps Engineer", "Initech", "MD", "desc")
+
+	items, total, err := dbGetJobListItems(JobFilters{Search: "engineer", Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("expected total 2 for 'engineer', got %d", total)
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 items, got %d", len(items))
+	}
+}
+
+func TestDBJobList_SearchByTitleCaseInsensitive(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	dbInsertJob("https://example.com/j1", "Go Engineer", "Acme", "DC", "desc")
+	dbInsertJob("https://example.com/j2", "Python Developer", "Globex", "VA", "desc")
+
+	items, total, err := dbGetJobListItems(JobFilters{Search: "ENGINEER", Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected total 1 for 'ENGINEER', got %d", total)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 item, got %d", len(items))
+	}
+}
+
+func TestDBJobList_SearchByCompany(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	dbInsertJob("https://example.com/j1", "Go Engineer", "Acme Corp", "DC", "desc")
+	dbInsertJob("https://example.com/j2", "Python Dev", "Globex", "VA", "desc")
+	dbInsertJob("https://example.com/j3", "DevSecOps", "Acme Federal", "MD", "desc")
+
+	items, total, err := dbGetJobListItems(JobFilters{Search: "acme", Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("expected 2 results for company 'acme', got %d", total)
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 items, got %d", len(items))
+	}
+}
+
+func TestDBJobList_SearchNoMatch(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	dbInsertJob("https://example.com/j1", "Go Engineer", "Acme", "DC", "desc")
+
+	items, total, err := dbGetJobListItems(JobFilters{Search: "zzznomatch", Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("expected 0 results, got %d", total)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected 0 items, got %d", len(items))
+	}
+}
+
+func TestDBJobList_FilterByStatus_Applied(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	jid1, _ := dbInsertJob("https://example.com/j1", "Job A", "", "", "desc")
+	jid2, _ := dbInsertJob("https://example.com/j2", "Job B", "", "", "desc")
+	dbInsertJob("https://example.com/j3", "Job C", "", "", "desc")
+
+	dbUpsertApplication(Application{JobID: jid1, Status: "applied"})
+	dbUpsertApplication(Application{JobID: jid2, Status: "interviewing"})
+	// j3 has no application — defaults to not_applied
+
+	items, total, err := dbGetJobListItems(JobFilters{Status: "applied", Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected 1 applied job, got %d", total)
+	}
+	if len(items) != 1 || items[0].ID != jid1 {
+		t.Errorf("expected job %d in results, got %v", jid1, items)
+	}
+}
+
+func TestDBJobList_FilterByStatus_NotApplied(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	jid1, _ := dbInsertJob("https://example.com/j1", "Job A", "", "", "desc")
+	jid2, _ := dbInsertJob("https://example.com/j2", "Job B", "", "", "desc")
+
+	dbUpsertApplication(Application{JobID: jid1, Status: "applied"})
+	// jid2 has no application — defaults to not_applied
+
+	items, total, err := dbGetJobListItems(JobFilters{Status: "not_applied", Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected 1 not_applied job, got %d", total)
+	}
+	if len(items) != 1 || items[0].ID != jid2 {
+		t.Errorf("expected job %d, got %v", jid2, items)
+	}
+}
+
+func TestDBJobList_FilterByScore_MinScore(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	insertJobWithAnalysis(t, "https://example.com/j1", "Job A", "", "anthropic", 5, 5)
+	insertJobWithAnalysis(t, "https://example.com/j2", "Job B", "", "anthropic", 4, 3)
+	insertJobWithAnalysis(t, "https://example.com/j3", "Job C", "", "anthropic", 3, 2)
+	insertJobWithAnalysis(t, "https://example.com/j4", "Job D", "", "anthropic", 2, 1)
+
+	items, total, err := dbGetJobListItems(JobFilters{Score: "3", Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("expected 2 jobs with adjusted score >= 3, got %d", total)
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 items, got %d", len(items))
+	}
+}
+
+func TestDBJobList_FilterByScore_Exact5(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	insertJobWithAnalysis(t, "https://example.com/j1", "Job A", "", "anthropic", 5, 5)
+	insertJobWithAnalysis(t, "https://example.com/j2", "Job B", "", "anthropic", 5, 4)
+	insertJobWithAnalysis(t, "https://example.com/j3", "Job C", "", "anthropic", 3, 3)
+
+	items, total, err := dbGetJobListItems(JobFilters{Score: "5", Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected exactly 1 job with score=5, got %d", total)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 item, got %d", len(items))
+	}
+}
+
+func TestDBJobList_FilterByScore_NotScored(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	dbInsertJob("https://example.com/j1", "No Analysis", "", "", "desc")
+	insertJobWithAnalysis(t, "https://example.com/j2", "Has Analysis", "", "anthropic", 4, 3)
+
+	items, total, err := dbGetJobListItems(JobFilters{Score: "0", Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected 1 unscored job, got %d", total)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 item, got %d", len(items))
+	}
+}
+
+func TestDBJobList_FilterByScore_Score1(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	insertJobWithAnalysis(t, "https://example.com/j1", "Job A", "", "anthropic", 4, 1)
+	insertJobWithAnalysis(t, "https://example.com/j2", "Job B", "", "anthropic", 3, 2)
+	dbInsertJob("https://example.com/j3", "No Score", "", "", "desc")
+
+	items, total, err := dbGetJobListItems(JobFilters{Score: "1", Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Both scored jobs qualify (adjusted >= 1)
+	if total != 2 {
+		t.Errorf("expected 2 jobs with score >= 1, got %d", total)
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 items, got %d", len(items))
+	}
+}
+
+func TestDBJobList_FilterByProvider_Anthropic(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	insertJobWithAnalysis(t, "https://example.com/j1", "Job A", "", "anthropic", 4, 3)
+	insertJobWithAnalysis(t, "https://example.com/j2", "Job B", "", "ollama", 3, 2)
+
+	items, total, err := dbGetJobListItems(JobFilters{Provider: "anthropic", Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected 1 anthropic job, got %d", total)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 item, got %d", len(items))
+	}
+}
+
+func TestDBJobList_FilterByProvider_Ollama(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	insertJobWithAnalysis(t, "https://example.com/j1", "Job A", "", "anthropic", 4, 3)
+	insertJobWithAnalysis(t, "https://example.com/j2", "Job B", "", "ollama", 3, 2)
+	insertJobWithAnalysis(t, "https://example.com/j3", "Job C", "", "ollama", 5, 5)
+
+	items, total, err := dbGetJobListItems(JobFilters{Provider: "ollama", Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("expected 2 ollama jobs, got %d", total)
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 items, got %d", len(items))
+	}
+}
+
+func TestDBJobList_FilterByProvider_Manual(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	dbInsertJob("manual://abc123", "Pasted Job", "", "", "desc")
+	dbInsertJob("https://example.com/j1", "Scraped Job", "", "", "desc")
+
+	items, total, err := dbGetJobListItems(JobFilters{Provider: "manual", Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected 1 manual job, got %d", total)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 item, got %d", len(items))
+	}
+}
+
+func TestDBJobList_MultipleFiltersAND(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// This one matches all filters: search=engineer, status=applied, score>=3, provider=anthropic
+	jid1, _ := insertJobWithAnalysis(t, "https://example.com/j1", "Go Engineer", "Acme", "anthropic", 4, 3)
+	dbUpsertApplication(Application{JobID: jid1, Status: "applied"})
+
+	// Wrong status
+	jid2, _ := insertJobWithAnalysis(t, "https://example.com/j2", "Python Engineer", "Acme", "anthropic", 4, 3)
+	dbUpsertApplication(Application{JobID: jid2, Status: "rejected"})
+
+	// Wrong provider
+	insertJobWithAnalysis(t, "https://example.com/j3", "DevSecOps Engineer", "", "ollama", 4, 3)
+
+	// Wrong score
+	jid4, _ := insertJobWithAnalysis(t, "https://example.com/j4", "Java Engineer", "", "anthropic", 3, 2)
+	dbUpsertApplication(Application{JobID: jid4, Status: "applied"})
+
+	f := JobFilters{
+		Search:   "engineer",
+		Status:   "applied",
+		Score:    "3",
+		Provider: "anthropic",
+		Page:     1,
+		PerPage:  25,
+	}
+	items, total, err := dbGetJobListItems(f)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected exactly 1 match for all filters, got %d", total)
+	}
+	if len(items) != 1 || items[0].ID != jid1 {
+		t.Errorf("expected job %d, got %v", jid1, items)
+	}
+}
+
+func TestDBJobList_Pagination_LimitOffset(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	for i := 0; i < 10; i++ {
+		dbInsertJob("https://example.com/j"+string(rune('0'+i)), "Job", "", "", "desc")
+	}
+
+	// Page 1, 3 per page
+	items, total, err := dbGetJobListItems(JobFilters{Page: 1, PerPage: 3})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 10 {
+		t.Errorf("expected total 10, got %d", total)
+	}
+	if len(items) != 3 {
+		t.Errorf("expected 3 items on page 1, got %d", len(items))
+	}
+
+	// Page 2, 3 per page
+	items2, total2, err := dbGetJobListItems(JobFilters{Page: 2, PerPage: 3})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total2 != 10 {
+		t.Errorf("expected total 10 on page 2, got %d", total2)
+	}
+	if len(items2) != 3 {
+		t.Errorf("expected 3 items on page 2, got %d", len(items2))
+	}
+
+	// Pages must return different jobs
+	if items[0].ID == items2[0].ID {
+		t.Error("page 1 and page 2 returned the same first item")
+	}
+}
+
+func TestDBJobList_Pagination_LastPagePartial(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	for i := 0; i < 7; i++ {
+		dbInsertJob("https://example.com/j"+string(rune('0'+i)), "Job", "", "", "desc")
+	}
+
+	// Page 3 of 3 with per_page=3 should return 1 item
+	items, total, err := dbGetJobListItems(JobFilters{Page: 3, PerPage: 3})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 7 {
+		t.Errorf("expected total 7, got %d", total)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 item on last partial page, got %d", len(items))
+	}
+}
+
+func TestDBJobList_Pagination_AllItems(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	for i := 0; i < 5; i++ {
+		dbInsertJob("https://example.com/j"+string(rune('0'+i)), "Job", "", "", "desc")
+	}
+
+	// PerPage=0 means return all
+	items, total, err := dbGetJobListItems(JobFilters{Page: 1, PerPage: 0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 5 {
+		t.Errorf("expected total 5, got %d", total)
+	}
+	if len(items) != 5 {
+		t.Errorf("expected all 5 items, got %d", len(items))
+	}
+}
+
+func TestDBJobList_Pagination_PageBeyondRange(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	dbInsertJob("https://example.com/j1", "Job", "", "", "desc")
+
+	// Page 999 with only 1 job — should return empty list, not error
+	items, total, err := dbGetJobListItems(JobFilters{Page: 999, PerPage: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected total 1, got %d", total)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected 0 items on out-of-range page, got %d", len(items))
 	}
 }

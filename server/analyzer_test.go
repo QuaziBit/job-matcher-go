@@ -228,3 +228,83 @@ func TestComputeAdjustedScore_MajorCapAt2(t *testing.T) {
 		t.Errorf("major penalty should be capped at 2, got %d", breakdown.MajorPenalty)
 	}
 }
+
+// ── Additional edge cases ─────────────────────────────────────────────────────
+
+func TestParseLLMResponse_EmptySkillLists(t *testing.T) {
+	raw := `{"score": 3, "matched_skills": [], "missing_skills": [], "reasoning": "No skills detected."}`
+	a, err := parseLLMResponse(raw, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a.Score != 3 {
+		t.Errorf("expected score 3, got %d", a.Score)
+	}
+	if len(a.MatchedSkills) != 0 {
+		t.Errorf("expected 0 matched skills, got %d", len(a.MatchedSkills))
+	}
+	if len(a.MissingSkills) != 0 {
+		t.Errorf("expected 0 missing skills, got %d", len(a.MissingSkills))
+	}
+}
+
+func TestComputeAdjustedScore_MinorCapAt1(t *testing.T) {
+	// 5 minors should cap total minor penalty at -1, not -2
+	missing := []MissingSkill{
+		{Skill: "Skill A", Severity: "minor"},
+		{Skill: "Skill B", Severity: "minor"},
+		{Skill: "Skill C", Severity: "minor"},
+		{Skill: "Skill D", Severity: "minor"},
+		{Skill: "Skill E", Severity: "minor"},
+	}
+	adjusted, pb := computeAdjustedScore(4, missing)
+	if pb.MinorPenalty > 1 {
+		t.Errorf("minor penalty should be capped at 1, got %d", pb.MinorPenalty)
+	}
+	if adjusted < 3 {
+		t.Errorf("5 minors from score 4 should not drop below 3, got %d", adjusted)
+	}
+}
+
+func TestComputeAdjustedScore_NeverBelowOneWithManyBlockers(t *testing.T) {
+	// Many blockers should not push score below 1
+	missing := []MissingSkill{
+		{Skill: "TS/SCI Clearance", Severity: "blocker"},
+		{Skill: "US Citizenship", Severity: "blocker"},
+		{Skill: "Polygraph", Severity: "blocker"},
+		{Skill: "Secret Clearance", Severity: "blocker"},
+	}
+	adjusted, _ := computeAdjustedScore(2, missing)
+	if adjusted < 1 {
+		t.Errorf("adjusted score should never go below 1, got %d", adjusted)
+	}
+}
+
+func TestKeywordBoost_MultipleClearanceLevels(t *testing.T) {
+	jd := "Must have TS/SCI clearance with full scope polygraph"
+	skills := []MissingSkill{
+		{Skill: "TS/SCI", Severity: "major"},
+		{Skill: "Polygraph", Severity: "major"},
+	}
+	results := keywordBoost(skills, jd)
+	for _, result := range results {
+		if result.Severity != "blocker" {
+			t.Errorf("expected %q to be upgraded to blocker in clearance JD, got %q",
+				result.Skill, result.Severity)
+		}
+	}
+}
+
+func TestKeywordBoost_PreservesMinorSeverity(t *testing.T) {
+	// A minor skill with no clearance/years keywords should stay minor
+	skills := []MissingSkill{
+		{Skill: "Tailwind CSS", Severity: "minor"},
+	}
+	results := keywordBoost(skills, "Looking for a full stack developer with React experience")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Severity != "minor" {
+		t.Errorf("expected 'minor' to be preserved, got %q", results[0].Severity)
+	}
+}
