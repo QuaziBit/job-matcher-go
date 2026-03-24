@@ -484,7 +484,9 @@ let _currentPage = 1;
 let _perPage     = 25;
 let _searchTimer = null;
 
-// ── Fetch jobs from server ────────────────────────────────────────────────────
+// =============================================== //
+// == Fetch jobs from server ===================== //
+// =============================================== //
 async function fetchJobs() {
   const search   = (document.getElementById('filter-search')   || {value:''}).value.trim();
   const status   = (document.getElementById('filter-status')   || {value:''}).value;
@@ -553,7 +555,9 @@ async function fetchJobs() {
   }
 }
 
-// ── Render jobs list from API response ───────────────────────────────────────
+// =============================================== //
+// == Render jobs list from API response ========= //
+// =============================================== //
 function renderJobs(data) {
   showLoading(false);
 
@@ -622,9 +626,18 @@ function renderJobs(data) {
 
   // Update pagination bar
   renderPagination(data);
+
+  // Save filter state when clicking a job — so Back restores it
+  list.querySelectorAll('a.job-item').forEach(link => {
+    link.addEventListener('click', () => {
+      saveFilterState();
+    });
+  });
 }
 
-// ── Render pagination controls ────────────────────────────────────────────────
+// =============================================== //
+// == Render pagination controls ================= //
+// =============================================== //
 function renderPagination(data) {
   const pagBar   = document.getElementById('pagination-bar');
   const info     = document.getElementById('pagination-info');
@@ -652,7 +665,9 @@ function renderPagination(data) {
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// =============================================== //
+// == Helpers ==================================== //
+// =============================================== //
 function showLoading(show) {
   const loading = document.getElementById('jobs-loading');
   const list    = document.getElementById('jobs-list');
@@ -691,7 +706,9 @@ function hasActiveFilter() {
     .some(id => { const el = document.getElementById(id); return el && el.value !== ''; });
 }
 
-// ── User actions ──────────────────────────────────────────────────────────────
+// =============================================== //
+// == User actions =============================== //
+// =============================================== //
 function applyFilters() {
   _currentPage = 1;
   fetchJobs();
@@ -724,26 +741,87 @@ function clearFilters() {
   log('clearFilters', 'all filters cleared');
 }
 
-// ── Restore state from URL params ─────────────────────────────────────────────
+// =============================================== //
+// == Restore state from URL params ============== //
+// =============================================== //
+function saveFilterState() {
+  const state = {
+    search:   (document.getElementById('filter-search')   || {value:''}).value,
+    status:   (document.getElementById('filter-status')   || {value:''}).value,
+    score:    (document.getElementById('filter-score')    || {value:''}).value,
+    provider: (document.getElementById('filter-provider') || {value:''}).value,
+    page:     _currentPage,
+    per_page: _perPage,
+  };
+  try {
+    sessionStorage.setItem('jobFilterState', JSON.stringify(state));
+    log('saveFilterState', 'saved:', JSON.stringify(state));
+  } catch(e) {
+    logErr('saveFilterState', 'sessionStorage write failed:', e);
+  }
+}
+
 function restoreFromURL() {
-  const params = new URLSearchParams(window.location.search);
-  const set = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
+  const rawSearch = window.location.search;
+  log('restoreFromURL', 'URL search string:', rawSearch);
 
-  set('filter-search',   params.get('search'));
-  set('filter-status',   params.get('status'));
-  set('filter-score',    params.get('score'));
-  set('filter-provider', params.get('provider'));
+  const params = new URLSearchParams(rawSearch);
 
-  _currentPage = parseInt(params.get('page'))     || 1;
+  const hasFilters = params.get('search') || params.get('status') ||
+                     params.get('score')  || params.get('provider');
+  const hasPageParams = params.get('page') || params.get('per_page');
 
-  const pp = params.get('per_page');
-  _perPage = (pp !== null && pp !== '') ? parseInt(pp) : 25;
+  log('restoreFromURL', 'hasFilters=' + hasFilters + ' hasPageParams=' + hasPageParams);
+
+  let saved = null;
+  if (!hasFilters) {
+    try {
+      const raw = sessionStorage.getItem('jobFilterState');
+      if (raw) {
+        saved = JSON.parse(raw);
+        log('restoreFromURL', 'found sessionStorage state:', JSON.stringify(saved));
+      }
+    } catch(e) {
+      logErr('restoreFromURL', 'sessionStorage read failed:', e);
+    }
+  }
+
+  const getValue = (key) => {
+    const fromURL = params.get(key);
+    if (fromURL !== null) return fromURL;
+    return saved ? (saved[key] || '') : '';
+  };
+
+  const setEl = (id, val) => {
+    const el = document.getElementById(id);
+    if (!el) { logErr('restoreFromURL', 'element not found: #' + id); return; }
+    el.value = val || '';
+    log('restoreFromURL', id + ' = ' + JSON.stringify(el.value));
+  };
+
+  setEl('filter-search',   getValue('search'));
+  setEl('filter-status',   getValue('status'));
+  setEl('filter-score',    getValue('score'));
+  setEl('filter-provider', getValue('provider'));
+
+  if (hasPageParams) {
+    _currentPage = parseInt(params.get('page')) || 1;
+    const pp = params.get('per_page');
+    _perPage = (pp !== null && pp !== '') ? parseInt(pp) : 25;
+  } else if (saved) {
+    _currentPage = saved.page     || 1;
+    _perPage     = (saved.per_page !== undefined && saved.per_page !== null) ? saved.per_page : 25;
+  }
 
   const perPageSel = document.getElementById('per-page');
   if (perPageSel) perPageSel.value = String(_perPage);
+
+  log('restoreFromURL', 'final: page=' + _currentPage + ' perPage=' + _perPage);
 }
 
-// ── Init ──────────────────────────────────────────────────────────────────────
+// =============================================== //
+// == Init ======================================= //
+// =============================================== //
 document.addEventListener('DOMContentLoaded', () => {
   const jobsList = document.getElementById('jobs-list');
   if (!jobsList) return; // not on jobs page
