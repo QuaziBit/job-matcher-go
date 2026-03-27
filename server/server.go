@@ -81,7 +81,10 @@ func (s *Server) Stop() {
 // templateFuncs returns custom template functions.
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
-		"hasPrefix": strings.HasPrefix,
+		"hasPrefix":          strings.HasPrefix,
+		"upper":              strings.ToUpper,
+		"groupMatchedSkills": groupMatchedSkills,
+		"buildClusterLines":  buildClusterLines,
 		// "empty" checks if a string value is empty — use instead of "not" for strings
 		// since Go's built-in "not" only works on booleans
 		"empty": func(v interface{}) bool {

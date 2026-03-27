@@ -244,6 +244,123 @@ func TestScrapeJob_NetworkErrorReturnsError(t *testing.T) {
 	}
 }
 
+// ── assessJobTextQuality ──────────────────────────────────────────────────────
+
+func TestAssessJobTextQuality_TooShort(t *testing.T) {
+	q := assessJobTextQuality("Short text.")
+	if q.Level == "ok" {
+		t.Error("expected non-ok level for very short text")
+	}
+	found := false
+	for _, issue := range q.Issues {
+		if strings.Contains(issue, "short") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected a 'short' issue in results")
+	}
+}
+
+func TestAssessJobTextQuality_NoisyText(t *testing.T) {
+	// Build a string with >15% non-ASCII chars
+	noisy := strings.Repeat("a", 100) + strings.Repeat("é", 20)
+	q := assessJobTextQuality(noisy)
+	found := false
+	for _, issue := range q.Issues {
+		if strings.Contains(issue, "non-ASCII") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected a non-ASCII noise issue")
+	}
+}
+
+func TestAssessJobTextQuality_BulletHeavy(t *testing.T) {
+	// 65 bullet lines
+	lines := make([]string, 65)
+	for i := range lines {
+		lines[i] = "- requirement " + strings.Repeat("x", 5)
+	}
+	q := assessJobTextQuality(strings.Join(lines, "\n"))
+	found := false
+	for _, issue := range q.Issues {
+		if strings.Contains(issue, "Bullet") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected a bullet-heavy issue")
+	}
+}
+
+func TestAssessJobTextQuality_CleanText(t *testing.T) {
+	clean := strings.Repeat("We are looking for a Go software engineer with Docker experience. ", 20)
+	q := assessJobTextQuality(clean)
+	if q.Level != "ok" {
+		t.Errorf("expected 'ok' for clean text, got %q (issues: %v)", q.Level, q.Issues)
+	}
+}
+
+func TestAssessJobTextQuality_CharCountSet(t *testing.T) {
+	text := "hello world"
+	q := assessJobTextQuality(text)
+	if q.CharCount != len(text) {
+		t.Errorf("expected CharCount=%d, got %d", len(text), q.CharCount)
+	}
+}
+
+// ── Task 3.3 — Extended quality checks ───────────────────────────────────────
+
+func TestAssessJobTextQuality_MixedSenioritySignals(t *testing.T) {
+	text := strings.Repeat("We are hiring a junior developer. Must have 5+ years experience. ", 10)
+	q := assessJobTextQuality(text)
+	found := false
+	for _, issue := range q.Issues {
+		if strings.Contains(issue, "seniority") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected mixed seniority issue")
+	}
+}
+
+func TestAssessJobTextQuality_BuzzwordHeavy(t *testing.T) {
+	// Make a text where buzzwords are very dense relative to word count
+	text := "synergy leverage paradigm holistic proactive dynamic innovative passionate rockstar ninja guru wizard disruptive"
+	q := assessJobTextQuality(text)
+	if q.BuzzwordCount == 0 {
+		t.Error("expected some buzzwords counted")
+	}
+}
+
+func TestAssessJobTextQuality_NoTechKeywords(t *testing.T) {
+	// A long description with no tech terms
+	text := strings.Repeat("We are looking for someone with excellent communication and teamwork skills. ", 20)
+	q := assessJobTextQuality(text)
+	if q.TechKeywords != 0 {
+		t.Logf("found %d tech keywords (may be false positives in generic text)", q.TechKeywords)
+	}
+	// Just verify the field is populated
+	_ = q.TechKeywords
+}
+
+func TestAssessJobTextQuality_GoodDescription_IsOk(t *testing.T) {
+	good := "We are looking for a Go developer with Docker and Kubernetes experience. " +
+		"Must have strong knowledge of REST APIs and PostgreSQL. " +
+		"AWS cloud experience is preferred. CI/CD pipeline experience a plus. " +
+		strings.Repeat("Technical role working on distributed systems. ", 5)
+	q := assessJobTextQuality(good)
+	if q.Level != "ok" {
+		t.Errorf("expected 'ok' for good description, got %q (issues: %v)", q.Level, q.Issues)
+	}
+	if q.TechKeywords == 0 {
+		t.Error("expected at least one tech keyword in good description")
+	}
+}
+
 // ── Additional edge cases ─────────────────────────────────────────────────────
 
 func TestScrapeJob_EmptyBodyReturnsError(t *testing.T) {

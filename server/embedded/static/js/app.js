@@ -846,3 +846,15 @@ document.addEventListener('DOMContentLoaded', () => {
   restoreFromURL();
   fetchJobs();
 });
+
+
+// =============================================== //
+// == Snippet Evidence Toggle ==================== //
+// =============================================== //
+
+function toggleSnippets(btn) {
+  const container = btn.nextElementSibling;
+  const isHidden = container.style.display === 'none' || !container.style.display;
+  container.style.display = isHidden ? 'block' : 'none';
+  btn.innerHTML = isHidden ? '&#9660; evidence' : '&#9658; evidence';
+}

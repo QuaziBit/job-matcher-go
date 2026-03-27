@@ -187,6 +187,8 @@ func handleJobDetail(w http.ResponseWriter, r *http.Request) {
 		Analyses:    analyses,
 		Resumes:     resumes,
 		OllamaModel: appCfg.OllamaModel,
+		TextQuality: assessJobTextQuality(job.RawDescription),
+		Comparison:  buildComparison(analyses),
 	})
 }
 
@@ -629,6 +631,146 @@ func handleResumeActions(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("✓ Resume deleted id=%d", id)
 	writeJSON(w, http.StatusOK, APIOK{OK: true})
+}
+
+// ── Resume Comparison ─────────────────────────────────────────────────────────
+
+func hasBlocker(skills []MissingSkill) bool {
+	for _, s := range skills {
+		if s.Severity == "blocker" {
+			return true
+		}
+	}
+	return false
+}
+
+func determineBetterFit(a, b Analysis) (string, string) {
+	aHasBlocker := hasBlocker(a.MissingSkills)
+	bHasBlocker := hasBlocker(b.MissingSkills)
+
+	if aHasBlocker && !bHasBlocker {
+		return b.ResumeLabel, "No hard blockers vs " + a.ResumeLabel + " which has blockers"
+	}
+	if bHasBlocker && !aHasBlocker {
+		return a.ResumeLabel, "No hard blockers vs " + b.ResumeLabel + " which has blockers"
+	}
+	if a.AdjustedScore > b.AdjustedScore {
+		return a.ResumeLabel, fmt.Sprintf("Higher adjusted score (%d vs %d)", a.AdjustedScore, b.AdjustedScore)
+	}
+	if b.AdjustedScore > a.AdjustedScore {
+		return b.ResumeLabel, fmt.Sprintf("Higher adjusted score (%d vs %d)", b.AdjustedScore, a.AdjustedScore)
+	}
+	return "Tie", "Both resumes score equally for this role"
+}
+
+func buildComparison(analyses []Analysis) *ResumeComparison {
+	if len(analyses) < 2 {
+		return nil
+	}
+	// Find two most recent analyses with different resume IDs
+	seen := map[int64]Analysis{}
+	for _, a := range analyses {
+		if _, exists := seen[a.ResumeID]; !exists {
+			seen[a.ResumeID] = a
+		}
+		if len(seen) == 2 {
+			break
+		}
+	}
+	if len(seen) < 2 {
+		return nil
+	}
+	var ids []int64
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	ra, rb := seen[ids[0]], seen[ids[1]]
+	better, reason := determineBetterFit(ra, rb)
+	return &ResumeComparison{ResumeA: ra, ResumeB: rb, BetterFit: better, BetterReason: reason}
+}
+
+// ── Template view helpers ─────────────────────────────────────────────────────
+
+// SkillGroup holds matched skills grouped under a single category label.
+type SkillGroup struct {
+	Category string
+	Skills   []MatchedSkill
+}
+
+// ClusterPenaltyLine is one row in the score breakdown for a skill cluster.
+type ClusterPenaltyLine struct {
+	Name    string
+	Skills  []string // skill names in this cluster
+	Penalty int
+	Capped  bool // true when raw penalty was reduced by the cluster cap
+}
+
+var skillGroupOrder = []string{
+	"security", "backend", "frontend", "cloud", "devops", "database", "ai", "other",
+}
+
+// groupMatchedSkills returns matched skills grouped by category in a stable order.
+func groupMatchedSkills(skills []MatchedSkill) []SkillGroup {
+	groups := map[string][]MatchedSkill{}
+	for _, s := range skills {
+		cat := s.Category
+		if cat == "" {
+			cat = "other"
+		}
+		groups[cat] = append(groups[cat], s)
+	}
+	seen := map[string]bool{}
+	var result []SkillGroup
+	for _, cat := range skillGroupOrder {
+		if g, ok := groups[cat]; ok {
+			result = append(result, SkillGroup{Category: cat, Skills: g})
+			seen[cat] = true
+		}
+	}
+	for cat, g := range groups {
+		if !seen[cat] {
+			result = append(result, SkillGroup{Category: cat, Skills: g})
+		}
+	}
+	return result
+}
+
+// buildClusterLines builds ordered penalty rows for the score breakdown,
+// grouping missing skills by cluster and showing whether the cap was applied.
+func buildClusterLines(missing []MissingSkill, clusters map[string]int) []ClusterPenaltyLine {
+	skillsByCluster := map[string][]string{}
+	rawByCluster := map[string]int{}
+	for _, s := range missing {
+		p := penaltyForSkill(s)
+		if p > 0 {
+			skillsByCluster[s.ClusterGroup] = append(skillsByCluster[s.ClusterGroup], s.Skill)
+			rawByCluster[s.ClusterGroup] += p
+		}
+	}
+	seen := map[string]bool{}
+	var lines []ClusterPenaltyLine
+	for _, name := range skillGroupOrder {
+		if pen, ok := clusters[name]; ok {
+			lines = append(lines, ClusterPenaltyLine{
+				Name:    name,
+				Skills:  skillsByCluster[name],
+				Penalty: pen,
+				Capped:  rawByCluster[name] > pen,
+			})
+			seen[name] = true
+		}
+	}
+	for name, pen := range clusters {
+		if !seen[name] {
+			lines = append(lines, ClusterPenaltyLine{
+				Name:    name,
+				Skills:  skillsByCluster[name],
+				Penalty: pen,
+				Capped:  rawByCluster[name] > pen,
+			})
+		}
+	}
+	return lines
 }
 
 // ── Shutdown ──────────────────────────────────────────────────────────────────

@@ -457,3 +457,81 @@ func TestHandlerJobsList_SearchParam_NoMatch(t *testing.T) {
 		t.Errorf("expected 0 jobs, got %d", len(data.Jobs))
 	}
 }
+
+// ── Task 3.2 — Resume Comparison ──────────────────────────────────────────────
+
+func TestBuildComparison_NilWhenLessThanTwoResumes(t *testing.T) {
+	if buildComparison(nil) != nil {
+		t.Error("expected nil for empty analyses")
+	}
+	single := []Analysis{{ResumeID: 1, ResumeLabel: "A", AdjustedScore: 4}}
+	if buildComparison(single) != nil {
+		t.Error("expected nil for single analysis")
+	}
+}
+
+func TestBuildComparison_NilWhenSameResume(t *testing.T) {
+	analyses := []Analysis{
+		{ResumeID: 1, ResumeLabel: "A", AdjustedScore: 4},
+		{ResumeID: 1, ResumeLabel: "A", AdjustedScore: 3},
+	}
+	if buildComparison(analyses) != nil {
+		t.Error("expected nil when both analyses use same resume")
+	}
+}
+
+func TestBuildComparison_ReturnsTwoMostRecent(t *testing.T) {
+	analyses := []Analysis{
+		{ResumeID: 1, ResumeLabel: "Resume A", AdjustedScore: 4},
+		{ResumeID: 2, ResumeLabel: "Resume B", AdjustedScore: 3},
+	}
+	cmp := buildComparison(analyses)
+	if cmp == nil {
+		t.Fatal("expected non-nil comparison")
+	}
+	if cmp.BetterFit == "" {
+		t.Error("expected a BetterFit verdict")
+	}
+}
+
+func TestDetermineBetterFit_BlockerWins(t *testing.T) {
+	a := Analysis{ResumeLabel: "A", AdjustedScore: 4,
+		MissingSkills: []MissingSkill{{Skill: "Clearance", Severity: "blocker"}}}
+	b := Analysis{ResumeLabel: "B", AdjustedScore: 2, MissingSkills: []MissingSkill{}}
+	winner, _ := determineBetterFit(a, b)
+	if winner != "B" {
+		t.Errorf("expected B to win (no blocker), got %q", winner)
+	}
+}
+
+func TestDetermineBetterFit_HigherScoreWins(t *testing.T) {
+	a := Analysis{ResumeLabel: "A", AdjustedScore: 5}
+	b := Analysis{ResumeLabel: "B", AdjustedScore: 3}
+	winner, _ := determineBetterFit(a, b)
+	if winner != "A" {
+		t.Errorf("expected A to win (higher score), got %q", winner)
+	}
+}
+
+func TestDetermineBetterFit_TieCase(t *testing.T) {
+	a := Analysis{ResumeLabel: "A", AdjustedScore: 4}
+	b := Analysis{ResumeLabel: "B", AdjustedScore: 4}
+	winner, _ := determineBetterFit(a, b)
+	if winner != "Tie" {
+		t.Errorf("expected 'Tie', got %q", winner)
+	}
+}
+
+func TestHasBlocker_TrueWhenBlockerPresent(t *testing.T) {
+	skills := []MissingSkill{{Skill: "Clearance", Severity: "blocker"}}
+	if !hasBlocker(skills) {
+		t.Error("expected hasBlocker to return true")
+	}
+}
+
+func TestHasBlocker_FalseWhenNoBlocker(t *testing.T) {
+	skills := []MissingSkill{{Skill: "AWS", Severity: "major"}}
+	if hasBlocker(skills) {
+		t.Error("expected hasBlocker to return false")
+	}
+}

@@ -31,6 +31,7 @@
     <button class="tab active" data-tab="analysis">Analysis</button>
     <button class="tab" data-tab="application">Application</button>
     <button class="tab" data-tab="description">Job Description</button>
+    {{if .Comparison}}<button class="tab" data-tab="compare">Compare</button>{{end}}
   </div>
 
   <!-- Analysis Tab -->
@@ -39,6 +40,15 @@
       <div class="section-header">
         <span class="section-title">Run New Analysis</span>
       </div>
+      {{if ne .TextQuality.Level "ok"}}
+      <div class="text-quality-warning level-{{.TextQuality.Level}}" style="margin-bottom: 14px;">
+        <span class="text-quality-title">Job description quality warning</span>
+        <ul class="text-quality-issues">
+          {{range .TextQuality.Issues}}<li>{{.}}</li>{{end}}
+        </ul>
+        <small class="text-dim">{{.TextQuality.CharCount}} chars · {{.TextQuality.TechKeywords}} tech keywords detected</small>
+      </div>
+      {{end}}
       <div class="form-grid" style="margin-bottom: 14px;">
         <div class="form-row" style="margin:0;">
           <label>Resume Version</label>
@@ -127,7 +137,14 @@
       <div class="section-title" style="margin-bottom: 12px;">Past Analyses</div>
       {{range .Analyses}}
       <div class="analysis-block" id="analysis-{{.ID}}">
-        <div class="analysis-header">
+        {{if .UsedFallback}}
+      <div class="analysis-warning">
+        Analysis used a fallback due to repeated model output errors. Results may be incomplete.
+        Try re-running the analysis.
+        {{if .ValidationErrors}}<small class="text-dim"> ({{.ValidationErrors}})</small>{{end}}
+      </div>
+      {{end}}
+      <div class="analysis-header">
           <div class="score-adjusted-wrap">
             <div class="score-badge score-{{.Score}}" title="Raw LLM score">{{.Score}}</div>
             {{if ne .AdjustedScore .Score}}
@@ -147,20 +164,73 @@
         </div>
 
         {{if .PenaltyBreakdown.TotalPenalty}}
-        <div class="penalty-row">
-          {{if .PenaltyBreakdown.Blockers}}<span class="penalty-tag penalty-blocker">{{.PenaltyBreakdown.Blockers}} blocker{{if gt .PenaltyBreakdown.Blockers 1}}s{{end}} −{{.PenaltyBreakdown.BlockerPenalty}}</span>{{end}}
-          {{if .PenaltyBreakdown.Majors}}<span class="penalty-tag penalty-major">{{.PenaltyBreakdown.Majors}} major{{if gt .PenaltyBreakdown.Majors 1}}s{{end}} −{{.PenaltyBreakdown.MajorPenalty}}</span>{{end}}
-          {{if .PenaltyBreakdown.Minors}}<span class="penalty-tag penalty-minor">{{.PenaltyBreakdown.Minors}} minor{{if gt .PenaltyBreakdown.Minors 1}}s{{end}} −{{.PenaltyBreakdown.MinorPenalty}}</span>{{end}}
-          {{if .PenaltyBreakdown.CountPenalty}}<span class="penalty-tag penalty-count">{{len .MissingSkills}} gaps −{{.PenaltyBreakdown.CountPenalty}}</span>{{end}}
-        </div>
+        <details class="score-breakdown">
+          <summary>Score Breakdown</summary>
+          <div class="score-breakdown-body">
+            <div class="breakdown-row">
+              <span class="breakdown-label">Base score (LLM)</span>
+              <span class="breakdown-value">{{.Score}} / 5</span>
+            </div>
+            <div class="breakdown-divider"></div>
+            <div class="breakdown-section-label">Penalties</div>
+            {{range buildClusterLines .MissingSkills .PenaltyBreakdown.Clusters}}
+            <div class="breakdown-row breakdown-penalty-row">
+              <span>
+                <span class="breakdown-cluster-name">{{range $i, $s := .Skills}}{{if $i}} / {{end}}{{$s}}{{end}}</span>
+                <span class="breakdown-cluster-label">({{.Name}}{{if .Capped}}, capped{{end}})</span>
+              </span>
+              <span class="breakdown-penalty-amt">−{{.Penalty}}</span>
+            </div>
+            {{end}}
+            {{if .PenaltyBreakdown.Minors}}
+            <div class="breakdown-row breakdown-penalty-row">
+              <span><span class="penalty-tag penalty-minor">MINOR</span> {{.PenaltyBreakdown.Minors}} minor gap{{if gt .PenaltyBreakdown.Minors 1}}s{{end}}</span>
+              <span class="breakdown-penalty-amt">{{if .PenaltyBreakdown.MinorPenalty}}−{{.PenaltyBreakdown.MinorPenalty}}{{else}}−0 (below threshold){{end}}</span>
+            </div>
+            {{end}}
+            {{if .PenaltyBreakdown.CountPenalty}}
+            <div class="breakdown-row breakdown-penalty-row">
+              <span><span class="penalty-tag penalty-count">COUNT</span> {{len .MissingSkills}} total gaps</span>
+              <span class="breakdown-penalty-amt">−{{.PenaltyBreakdown.CountPenalty}}</span>
+            </div>
+            {{end}}
+            <div class="breakdown-divider"></div>
+            <div class="breakdown-row breakdown-total-row">
+              <span class="breakdown-label">Adjusted score</span>
+              <span class="breakdown-value score-{{.AdjustedScore}}">{{.AdjustedScore}} / 5</span>
+            </div>
+            <div class="breakdown-footer">
+              {{if .LLMProvider}}Provider: {{.LLMProvider}}{{end}}{{if .LLMModel}} · Model: {{.LLMModel}}{{end}}
+            </div>
+          </div>
+        </details>
         {{end}}
 
         {{if .MatchedSkills}}
         <div style="margin-top: 10px;">
-          <div class="text-xs text-dim" style="margin-bottom: 4px;">Matched skills</div>
-          <div class="pill-list">
-            {{range .MatchedSkills}}<span class="pill pill-green">{{.}}</span>{{end}}
+          <div class="text-xs text-dim" style="margin-bottom: 6px;">Matched skills</div>
+          {{range groupMatchedSkills .MatchedSkills}}
+          <div class="skill-category-group">
+            <span class="skill-category-label">{{upper .Category}}</span>
+            <div class="pill-list">
+              {{range .Skills}}
+              <div class="skill-evidence">
+                <span class="pill pill-green skill-chip matched match-{{.MatchType}}">
+                  {{.Skill}}
+                  {{if .MatchType}}<span class="match-type-badge match-{{.MatchType}}">{{.MatchType}}</span>{{end}}
+                </span>
+                {{if .JDSnippet}}
+                <button class="snippet-toggle" onclick="toggleSnippets(this)">&#9658; evidence</button>
+                <div class="evidence-snippets">
+                  <div class="snippet jd-snippet"><span class="snippet-label">JD:</span> &#8220;{{.JDSnippet}}&#8221;</div>
+                  {{if .ResumeSnippet}}<div class="snippet resume-snippet"><span class="snippet-label">Resume:</span> &#8220;{{.ResumeSnippet}}&#8221;</div>{{end}}
+                </div>
+                {{end}}
+              </div>
+              {{end}}
+            </div>
           </div>
+          {{end}}
         </div>
         {{end}}
 
@@ -169,8 +239,19 @@
           <div class="text-xs text-dim" style="margin-bottom: 4px;">Missing / gaps</div>
           <div class="pill-list">
             {{range .MissingSkills}}
-              <span class="pill {{if eq .Severity "blocker"}}pill-red{{else if eq .Severity "major"}}pill-orange{{else}}pill-dim{{end}}"
-                    title="{{.Severity}}">{{.Skill}}</span>
+            <div class="skill-evidence">
+              <span class="skill-chip missing severity-{{.Severity}} {{if eq .Severity "blocker"}}pill-red{{else if eq .Severity "major"}}pill-orange{{else}}pill-dim{{end}}"
+                    title="{{.Severity}}{{if .RequirementType}} · {{.RequirementType}}{{end}}">
+                {{if .RequirementType}}<span class="req-type req-{{.RequirementType}}">{{upper .RequirementType}}</span>{{end}}
+                {{.Skill}}
+              </span>
+              {{if .JDSnippet}}
+              <button class="snippet-toggle" onclick="toggleSnippets(this)">&#9658; evidence</button>
+              <div class="evidence-snippets">
+                <div class="snippet jd-snippet"><span class="snippet-label">JD:</span> &#8220;{{.JDSnippet}}&#8221;</div>
+              </div>
+              {{end}}
+            </div>
             {{end}}
           </div>
         </div>
@@ -178,6 +259,25 @@
 
         {{if .Reasoning}}
         <div class="reasoning">{{.Reasoning}}</div>
+        {{end}}
+
+        {{if .Suggestions}}
+        <div class="suggestions-panel">
+          <div class="section-title" style="margin: 14px 0 6px;">Resume Suggestions</div>
+          <div class="suggestions-disclaimer">
+            Based on your existing experience only — these suggestions clarify or reposition
+            content you already have, not skills to fabricate.
+          </div>
+          {{range .Suggestions}}
+          <div class="suggestion-item">
+            <div class="suggestion-title">{{.Title}}</div>
+            <div class="suggestion-detail">{{.Detail}}</div>
+            {{if .JobRequirement}}
+            <div class="suggestion-req">Addresses: &#8220;{{.JobRequirement}}&#8221;</div>
+            {{end}}
+          </div>
+          {{end}}
+        </div>
         {{end}}
       </div>
       {{end}}
@@ -222,13 +322,68 @@
     </div>
   </div>
 
+  <!-- Compare Tab -->
+  {{if .Comparison}}
+  <div class="tab-content" data-tab-content="compare">
+    <div class="card">
+      <div class="compare-panel">
+        <div class="compare-header">
+          <div class="compare-label"></div>
+          <div class="compare-col">{{.Comparison.ResumeA.ResumeLabel}}</div>
+          <div class="compare-col">{{.Comparison.ResumeB.ResumeLabel}}</div>
+        </div>
+        <div class="compare-row">
+          <div class="compare-label">Adjusted Score</div>
+          <div class="compare-val">
+            <span class="score-badge score-{{.Comparison.ResumeA.AdjustedScore}}">{{.Comparison.ResumeA.AdjustedScore}}</span>
+          </div>
+          <div class="compare-val">
+            <span class="score-badge score-{{.Comparison.ResumeB.AdjustedScore}}">{{.Comparison.ResumeB.AdjustedScore}}</span>
+          </div>
+        </div>
+        <div class="compare-row">
+          <div class="compare-label">Matched Skills</div>
+          <div class="compare-val">{{len .Comparison.ResumeA.MatchedSkills}}</div>
+          <div class="compare-val">{{len .Comparison.ResumeB.MatchedSkills}}</div>
+        </div>
+        <div class="compare-row">
+          <div class="compare-label">Missing Skills</div>
+          <div class="compare-val">{{len .Comparison.ResumeA.MissingSkills}}</div>
+          <div class="compare-val">{{len .Comparison.ResumeB.MissingSkills}}</div>
+        </div>
+        <div class="compare-row">
+          <div class="compare-label">Blockers</div>
+          <div class="compare-val">{{.Comparison.ResumeA.PenaltyBreakdown.Blockers}}</div>
+          <div class="compare-val">{{.Comparison.ResumeB.PenaltyBreakdown.Blockers}}</div>
+        </div>
+      </div>
+      <div class="compare-verdict">
+        <span class="verdict-label">Better fit:</span>
+        <span class="verdict-winner">{{.Comparison.BetterFit}}</span>
+        <span class="verdict-reason text-dim">— {{.Comparison.BetterReason}}</span>
+      </div>
+    </div>
+  </div>
+  {{end}}
+
   <!-- Description Tab -->
   <div class="tab-content" data-tab-content="description">
     <div class="card">
       <div class="flex justify-between items-center mb-16">
         <span class="section-title">Raw Scraped Description</span>
-        <button class="btn btn-ghost btn-sm" onclick="toggleDesc({{.Job.ID}})">Toggle</button>
+        <div class="flex items-center gap-10">
+          <span class="text-xs text-dim">{{.TextQuality.CharCount}} characters</span>
+          <button class="btn btn-ghost btn-sm" onclick="toggleDesc({{.Job.ID}})">Toggle</button>
+        </div>
       </div>
+      {{if ne .TextQuality.Level "ok"}}
+      <div class="text-quality-warning level-{{.TextQuality.Level}}">
+        <span class="text-quality-title">Analysis reliability may be reduced</span>
+        <ul class="text-quality-issues">
+          {{range .TextQuality.Issues}}<li>{{.}}</li>{{end}}
+        </ul>
+      </div>
+      {{end}}
       <div id="desc-box" class="desc-box hidden"></div>
     </div>
   </div>

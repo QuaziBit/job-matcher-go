@@ -31,6 +31,7 @@ func initDB(dbPath string) error {
 	if err := createSchema(); err != nil {
 		return fmt.Errorf("create schema: %w", err)
 	}
+	runMigrations()
 	log.Printf("✓ SQLite ready: %s", dbPath)
 	return nil
 }
@@ -81,6 +82,23 @@ func createSchema() error {
 	);`
 	_, err := db.Exec(schema)
 	return err
+}
+
+// runMigrations adds new columns to existing tables. Each ALTER TABLE is
+// executed with the error ignored — SQLite returns "duplicate column name"
+// if the column already exists, which is safe to ignore.
+func runMigrations() {
+	migrations := []string{
+		"ALTER TABLE analyses ADD COLUMN matched_skills_v2 TEXT DEFAULT '[]'",
+		"ALTER TABLE analyses ADD COLUMN missing_skills_v2 TEXT DEFAULT '[]'",
+		"ALTER TABLE analyses ADD COLUMN validation_errors TEXT DEFAULT ''",
+		"ALTER TABLE analyses ADD COLUMN retry_count INTEGER DEFAULT 0",
+		"ALTER TABLE analyses ADD COLUMN used_fallback INTEGER DEFAULT 0",
+		"ALTER TABLE analyses ADD COLUMN suggestions TEXT DEFAULT '[]'",
+	}
+	for _, m := range migrations {
+		_, _ = db.Exec(m)
+	}
 }
 
 // ── Resumes ───────────────────────────────────────────────────────────────────
@@ -312,7 +330,13 @@ func dbGetAnalysesByJobID(jobID int64) ([]Analysis, error) {
 		SELECT a.id, a.job_id, a.resume_id, r.label,
 		       a.score, a.adjusted_score, a.penalty_breakdown,
 		       a.matched_skills, a.missing_skills, a.reasoning,
-		       a.llm_provider, a.llm_model, a.created_at
+		       a.llm_provider, a.llm_model, a.created_at,
+		       COALESCE(a.matched_skills_v2, '[]'),
+		       COALESCE(a.missing_skills_v2, '[]'),
+		       COALESCE(a.validation_errors, ''),
+		       COALESCE(a.retry_count, 0),
+		       COALESCE(a.used_fallback, 0),
+		       COALESCE(a.suggestions, '[]')
 		FROM analyses a
 		JOIN resumes r ON r.id = a.resume_id
 		WHERE a.job_id = ?
@@ -325,19 +349,45 @@ func dbGetAnalysesByJobID(jobID int64) ([]Analysis, error) {
 	var analyses []Analysis
 	for rows.Next() {
 		var a Analysis
-		var ts, pbJSON, matchedJSON, missingJSON string
+		var ts, pbJSON, matchedV1JSON, missingV1JSON, matchedV2JSON, missingV2JSON, suggestionsJSON string
+		var usedFallbackInt int
 		if err := rows.Scan(
 			&a.ID, &a.JobID, &a.ResumeID, &a.ResumeLabel,
 			&a.Score, &a.AdjustedScore, &pbJSON,
-			&matchedJSON, &missingJSON, &a.Reasoning,
+			&matchedV1JSON, &missingV1JSON, &a.Reasoning,
 			&a.LLMProvider, &a.LLMModel, &ts,
+			&matchedV2JSON, &missingV2JSON,
+			&a.ValidationErrors, &a.RetryCount, &usedFallbackInt,
+			&suggestionsJSON,
 		); err != nil {
 			return nil, err
 		}
 		a.CreatedAt, _ = parseTS(ts)
+		a.UsedFallback = usedFallbackInt != 0
 		json.Unmarshal([]byte(pbJSON), &a.PenaltyBreakdown)
-		json.Unmarshal([]byte(matchedJSON), &a.MatchedSkills)
-		a.MissingSkills = parseMissingSkills(missingJSON)
+		json.Unmarshal([]byte(suggestionsJSON), &a.Suggestions)
+
+		// Prefer v2 columns; fall back to v1 if v2 is empty
+		var matchedV2 []MatchedSkill
+		if err := json.Unmarshal([]byte(matchedV2JSON), &matchedV2); err == nil && len(matchedV2) > 0 {
+			a.MatchedSkills = matchedV2
+		} else {
+			// v1 fallback: plain string list → MatchedSkill stubs
+			var v1Names []string
+			if err := json.Unmarshal([]byte(matchedV1JSON), &v1Names); err == nil {
+				for _, name := range v1Names {
+					a.MatchedSkills = append(a.MatchedSkills, MatchedSkill{Skill: name, MatchType: "exact"})
+				}
+			}
+		}
+
+		var missingV2 []MissingSkill
+		if err := json.Unmarshal([]byte(missingV2JSON), &missingV2); err == nil && len(missingV2) > 0 {
+			a.MissingSkills = missingV2
+		} else {
+			a.MissingSkills = parseMissingSkills(missingV1JSON)
+		}
+
 		if a.AdjustedScore == 0 {
 			a.AdjustedScore = a.Score
 		}
@@ -348,17 +398,34 @@ func dbGetAnalysesByJobID(jobID int64) ([]Analysis, error) {
 
 func dbInsertAnalysis(a Analysis) (int64, error) {
 	pbJSON, _ := json.Marshal(a.PenaltyBreakdown)
-	matchedJSON, _ := json.Marshal(a.MatchedSkills)
-	missingJSON, _ := json.Marshal(a.MissingSkills)
+	// v2: structured MatchedSkill / MissingSkill with snippets
+	matchedV2JSON, _ := json.Marshal(a.MatchedSkills)
+	missingV2JSON, _ := json.Marshal(a.MissingSkills)
+	// v1: plain skill name strings for backward compat
+	matchedV1 := make([]string, len(a.MatchedSkills))
+	for i, m := range a.MatchedSkills {
+		matchedV1[i] = m.Skill
+	}
+	matchedV1JSON, _ := json.Marshal(matchedV1)
+	missingV1JSON, _ := json.Marshal(a.MissingSkills) // still valid JSON for old readers
 
+	suggestionsJSON, _ := json.Marshal(a.Suggestions)
+	usedFallbackInt := 0
+	if a.UsedFallback {
+		usedFallbackInt = 1
+	}
 	res, err := db.Exec(`
 		INSERT INTO analyses
 		(job_id, resume_id, score, adjusted_score, penalty_breakdown,
-		 matched_skills, missing_skills, reasoning, llm_provider, llm_model)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 matched_skills, missing_skills, reasoning, llm_provider, llm_model,
+		 matched_skills_v2, missing_skills_v2,
+		 validation_errors, retry_count, used_fallback, suggestions)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.JobID, a.ResumeID, a.Score, a.AdjustedScore, string(pbJSON),
-		string(matchedJSON), string(missingJSON), a.Reasoning,
+		string(matchedV1JSON), string(missingV1JSON), a.Reasoning,
 		a.LLMProvider, a.LLMModel,
+		string(matchedV2JSON), string(missingV2JSON),
+		a.ValidationErrors, a.RetryCount, usedFallbackInt, string(suggestionsJSON),
 	)
 	if err != nil {
 		return 0, err
@@ -440,11 +507,14 @@ func parseMissingSkills(raw string) []MissingSkill {
 	for _, r := range rawMissing {
 		var structured MissingSkill
 		if err := json.Unmarshal(r, &structured); err == nil && structured.Skill != "" {
+			if structured.RequirementType == "" {
+				structured.RequirementType = "preferred"
+			}
 			result = append(result, structured)
 		} else {
 			var flat string
 			if err := json.Unmarshal(r, &flat); err == nil {
-				result = append(result, MissingSkill{Skill: flat, Severity: "minor"})
+				result = append(result, MissingSkill{Skill: flat, Severity: "minor", RequirementType: "preferred"})
 			}
 		}
 	}

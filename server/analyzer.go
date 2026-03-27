@@ -29,18 +29,45 @@ DevSecOps, and cloud infrastructure roles. You evaluate how well a candidate's r
 You MUST respond with ONLY valid JSON — no prose, no markdown, no code fences. Exactly this shape:
 {
   "score": <integer 1-5>,
-  "matched_skills": ["skill1", "skill2", ...],
-  "missing_skills": [
-    {"skill": "skill name", "severity": "blocker|major|minor"},
+  "matched_skills": [
+    {"skill": "skill name", "match_type": "exact|partial|inferred", "jd_snippet": "verbatim phrase from JD (max 100 chars)", "resume_snippet": "verbatim phrase from resume (max 100 chars)"},
     ...
   ],
-  "reasoning": "<2-4 sentence honest assessment>"
+  "missing_skills": [
+    {"skill": "skill name", "severity": "blocker|major|minor", "requirement_type": "hard|preferred|bonus", "jd_snippet": "verbatim phrase from JD (max 100 chars)"},
+    ...
+  ],
+  "reasoning": "<2-4 sentence honest assessment>",
+  "suggestions": [
+    {"title": "short label", "detail": "specific actionable text referencing real resume phrases", "job_requirement": "verbatim JD phrase this addresses"},
+    ...
+  ]
 }
+
+Suggestion rules — you MUST follow these exactly:
+  - Generate exactly 3 resume improvement suggestions
+  - ONLY suggest clarifying, repositioning, or expanding EXISTING resume content
+  - NEVER suggest adding skills, certifications, or experience the candidate does not already have
+  - Each suggestion must cite the specific job requirement it addresses
+  - Be concrete — reference actual resume phrases and JD phrases
+  - If the resume is already strong for a requirement, skip it (fewer than 3 is acceptable)
+
+Snippet rules — you MUST follow these exactly:
+  - Snippets must be verbatim phrases copied from the provided text, max 100 characters
+  - Do NOT fabricate or paraphrase snippets
+  - If you cannot find a direct phrase for a matched skill, set match_type to "inferred" and omit resume_snippet
+  - match_type values: exact = skill name appears verbatim, partial = related term found, inferred = implied by context
 
 Severity definitions for missing_skills:
   blocker = eliminates candidacy entirely (e.g. required clearance, mandatory cert, minimum years not met)
   major   = significant gap that will hurt chances substantially
   minor   = nice-to-have or learnable gap that is unlikely to disqualify
+
+Requirement type definitions for missing_skills:
+  hard      = job uses words like: required, must have, must hold, mandatory, eligibility-blocking
+  preferred = job uses words like: preferred, desired, strong plus, ideally
+  bonus     = job uses words like: nice to have, is a plus, familiarity with
+  If unclear, use "preferred" as the default.
 
 Scoring rubric:
   1 = Poor match — major gaps, different domain entirely
@@ -56,10 +83,11 @@ func buildUserPrompt(resume, jobDescription string) string {
 // ── LLM response parsing ──────────────────────────────────────────────────────
 
 type llmRawResponse struct {
-	Score         int               `json:"score"`
-	MatchedSkills []string          `json:"matched_skills"`
-	MissingSkills []json.RawMessage `json:"missing_skills"`
-	Reasoning     string            `json:"reasoning"`
+	Score         int                `json:"score"`
+	MatchedSkills []json.RawMessage  `json:"matched_skills"`
+	MissingSkills []json.RawMessage  `json:"missing_skills"`
+	Reasoning     string             `json:"reasoning"`
+	Suggestions   []json.RawMessage  `json:"suggestions"`
 }
 
 func parseLLMResponse(raw, jobDescription string) (Analysis, error) {
@@ -84,18 +112,48 @@ func parseLLMResponse(raw, jobDescription string) (Analysis, error) {
 		return Analysis{}, fmt.Errorf("score out of range: %d", resp.Score)
 	}
 
-	// Parse missing skills — handle both [{skill,severity}] and ["skill"]
+	// Parse matched skills — handle v2 [{skill,match_type,jd_snippet,resume_snippet}] or v1 ["skill"]
+	var matched []MatchedSkill
+	for _, r := range resp.MatchedSkills {
+		var v2 MatchedSkill
+		if err := json.Unmarshal(r, &v2); err == nil && v2.Skill != "" {
+			if v2.MatchType == "" {
+				v2.MatchType = "exact"
+			}
+			matched = append(matched, v2)
+		} else {
+			var flat string
+			if err := json.Unmarshal(r, &flat); err == nil && flat != "" {
+				matched = append(matched, MatchedSkill{Skill: flat, MatchType: "exact"})
+			}
+		}
+	}
+
+	// Parse missing skills — handle v2 [{skill,severity,requirement_type,jd_snippet}] or v1 ["skill"]
 	var missing []MissingSkill
-	for _, raw := range resp.MissingSkills {
+	for _, r := range resp.MissingSkills {
 		var structured MissingSkill
-		if err := json.Unmarshal(raw, &structured); err == nil && structured.Skill != "" {
+		if err := json.Unmarshal(r, &structured); err == nil && structured.Skill != "" {
+			if structured.RequirementType == "" {
+				structured.RequirementType = "preferred"
+			}
 			missing = append(missing, structured)
 		} else {
 			var flat string
-			if err := json.Unmarshal(raw, &flat); err == nil && flat != "" {
-				missing = append(missing, MissingSkill{Skill: flat, Severity: "minor"})
+			if err := json.Unmarshal(r, &flat); err == nil && flat != "" {
+				missing = append(missing, MissingSkill{Skill: flat, Severity: "minor", RequirementType: "preferred"})
 			}
 		}
+	}
+
+	// Apply skill normalization — canonicalize names and assign categories
+	for i := range matched {
+		matched[i].Skill = NormalizeSkill(matched[i].Skill)
+		matched[i].Category = GetSkillCategory(matched[i].Skill)
+	}
+	for i := range missing {
+		missing[i].Skill = NormalizeSkill(missing[i].Skill)
+		missing[i].ClusterGroup = GetSkillCategory(missing[i].Skill)
 	}
 
 	// Keyword detector pass — upgrade severities
@@ -105,14 +163,57 @@ func parseLLMResponse(raw, jobDescription string) (Analysis, error) {
 
 	adjusted, breakdown := computeAdjustedScore(resp.Score, missing)
 
+	// Parse suggestions — handle both object format and plain string format.
+	// Ollama models often return plain strings despite being asked for objects.
+	// We accept both and normalize to ResumeSuggestion.
+	var suggestions []ResumeSuggestion
+	for _, raw := range resp.Suggestions {
+		// Try object format first: {"title":..., "detail":..., "job_requirement":...}
+		var s ResumeSuggestion
+		if err := json.Unmarshal(raw, &s); err == nil && s.Detail != "" {
+			suggestions = append(suggestions, s)
+			continue
+		}
+		// Fall back to plain string format: "some suggestion text"
+		var str string
+		if err := json.Unmarshal(raw, &str); err == nil && str != "" {
+			suggestions = append(suggestions, ResumeSuggestion{
+				Title:  "Suggestion",
+				Detail: str,
+			})
+			continue
+		}
+		log.Printf("→ skipping unparseable suggestion: %s", string(raw))
+	}
+	if len(suggestions) > 3 {
+		suggestions = suggestions[:3]
+	}
+
 	return Analysis{
 		Score:            resp.Score,
 		AdjustedScore:    adjusted,
 		PenaltyBreakdown: breakdown,
-		MatchedSkills:    resp.MatchedSkills,
+		MatchedSkills:    matched,
 		MissingSkills:    missing,
 		Reasoning:        resp.Reasoning,
+		Suggestions:      suggestions,
 	}, nil
+}
+
+// penaltyForSkill returns the penalty points for a single missing skill.
+// Bonus requirement type always returns 0 regardless of severity.
+func penaltyForSkill(skill MissingSkill) int {
+	if skill.RequirementType == "bonus" {
+		return 0
+	}
+	switch skill.Severity {
+	case "blocker":
+		return 2
+	case "major":
+		return 1
+	default: // minor
+		return 0 // minors are aggregated by count in computeAdjustedScore
+	}
 }
 
 // keywordBoost upgrades severity of missing skills matching hard-blocker patterns.
@@ -145,14 +246,35 @@ func keywordBoost(skills []MissingSkill, jd string) []MissingSkill {
 			(strings.Contains(skillLower, "required") || strings.Contains(skillLower, "must")) {
 			severity = "blocker"
 		}
-		result[i] = MissingSkill{Skill: s.Skill, Severity: severity}
+		// Preserve all fields; only overwrite severity
+		result[i] = s
+		result[i].Severity = severity
 	}
 	return result
 }
 
-// computeAdjustedScore applies the full penalty pipeline.
+// clusterPenaltyCap returns the maximum total penalty allowed for a skill cluster group.
+func clusterPenaltyCap(group string) int {
+	if group == "security" {
+		return 2
+	}
+	return 1
+}
+
+// computeAdjustedScore applies the full penalty pipeline with per-cluster caps.
 func computeAdjustedScore(rawScore int, missing []MissingSkill) (int, PenaltyBreakdown) {
+	// Ensure ClusterGroup is set on all skills
+	for i := range missing {
+		if missing[i].ClusterGroup == "" {
+			missing[i].ClusterGroup = GetSkillCategory(missing[i].Skill)
+		}
+	}
+
+	// Count severity totals and group by cluster
 	var blockers, majors, minors int
+	type clusterData struct{ rawPenalty int }
+	clusters := map[string]*clusterData{}
+
 	for _, s := range missing {
 		switch s.Severity {
 		case "blocker":
@@ -162,17 +284,47 @@ func computeAdjustedScore(rawScore int, missing []MissingSkill) (int, PenaltyBre
 		default:
 			minors++
 		}
+		p := penaltyForSkill(s)
+		if p > 0 {
+			if clusters[s.ClusterGroup] == nil {
+				clusters[s.ClusterGroup] = &clusterData{}
+			}
+			clusters[s.ClusterGroup].rawPenalty += p
+		}
 	}
 
-	bp := min(blockers*2, 3)
-	mp := min(majors*1, 2)
-	mnp := min(minors/2, 1) // integer division: need 2 minors for -1
+	// Cap each cluster and sum up
+	clusterPenalties := map[string]int{}
+	clusterTotal := 0
+	for group, data := range clusters {
+		cap := clusterPenaltyCap(group)
+		capped := data.rawPenalty
+		if capped > cap {
+			capped = cap
+		}
+		clusterPenalties[group] = capped
+		clusterTotal += capped
+	}
+
+	// For the breakdown display, report raw severity penalties capped globally
+	bp := blockers * 2
+	if bp > 3 {
+		bp = 3
+	}
+	mp := majors * 1
+	if mp > 2 {
+		mp = 2
+	}
+	mnp := minors / 2
+	if mnp > 1 {
+		mnp = 1
+	}
 	cp := 0
 	if len(missing) > 6 {
 		cp = 1
 	}
 
-	total := bp + mp + mnp + cp
+	total := clusterTotal + mnp + cp
 	adjusted := rawScore - total
 	if adjusted < 1 {
 		adjusted = 1
@@ -187,14 +339,8 @@ func computeAdjustedScore(rawScore int, missing []MissingSkill) (int, PenaltyBre
 		MinorPenalty:   mnp,
 		CountPenalty:   cp,
 		TotalPenalty:   total,
+		Clusters:       clusterPenalties,
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // ── Anthropic ─────────────────────────────────────────────────────────────────
@@ -206,7 +352,7 @@ func analyzeWithAnthropic(resume, jobDescription, apiKey string) (Analysis, erro
 	}
 	payload := map[string]interface{}{
 		"model":      anthropicModel,
-		"max_tokens": 1024,
+		"max_tokens": 4096,
 		"system":     systemPrompt,
 		"messages": []map[string]string{
 			{"role": "user", "content": buildUserPrompt(resume, jobDescription)},
@@ -313,11 +459,100 @@ func analyzeWithOllama(resume, jobDescription string, cfg config.Config) (Analys
 	return analysis, nil
 }
 
+// ── Validation ────────────────────────────────────────────────────────────────
+
+type ValidationResult struct {
+	Valid  bool
+	Errors []string
+}
+
+func validateLLMOutput(result Analysis, jd, resume string) ValidationResult {
+	var errs []string
+
+	if result.Score < 1 || result.Score > 5 {
+		errs = append(errs, fmt.Sprintf("score %d out of range 1-5", result.Score))
+	}
+
+	if len(jd) > 500 && len(result.MatchedSkills) == 0 {
+		errs = append(errs, "no matched skills despite rich job description")
+	}
+
+	matchedSet := map[string]bool{}
+	for _, m := range result.MatchedSkills {
+		matchedSet[strings.ToLower(m.Skill)] = true
+	}
+	for _, m := range result.MissingSkills {
+		if matchedSet[strings.ToLower(m.Skill)] {
+			errs = append(errs, fmt.Sprintf("skill %q appears in both matched and missing", m.Skill))
+		}
+	}
+
+	validSeverities := map[string]bool{"blocker": true, "major": true, "minor": true}
+	for _, m := range result.MissingSkills {
+		if !validSeverities[m.Severity] {
+			errs = append(errs, fmt.Sprintf("invalid severity %q for skill %q", m.Severity, m.Skill))
+		}
+	}
+
+	if strings.TrimSpace(result.Reasoning) == "" {
+		errs = append(errs, "empty reasoning")
+	}
+
+	return ValidationResult{Valid: len(errs) == 0, Errors: errs}
+}
+
+func partialFallbackAnalysis() Analysis {
+	// Score must be 1 (minimum valid) — 0 would fail validateLLMOutput's own check.
+	return Analysis{
+		Score:         1,
+		AdjustedScore: 1,
+		Reasoning:     "Analysis could not be completed reliably. Please try again or switch providers.",
+		MatchedSkills: []MatchedSkill{},
+		MissingSkills: []MissingSkill{},
+	}
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
-func AnalyzeMatch(resume, jobDescription, provider string, cfg config.Config) (Analysis, error) {
+// callLLMOnce dispatches to the right provider for a single attempt.
+func callLLMOnce(resume, jd, provider string, cfg config.Config) (Analysis, error) {
 	if provider == "ollama" {
-		return analyzeWithOllama(resume, jobDescription, cfg)
+		return analyzeWithOllama(resume, jd, cfg)
 	}
-	return analyzeWithAnthropic(resume, jobDescription, cfg.AnthropicAPIKey)
+	return analyzeWithAnthropic(resume, jd, cfg.AnthropicAPIKey)
+}
+
+// AnalyzeMatch runs the analysis with up to maxRetries attempts, validating
+// each result. If all attempts fail, returns a partial fallback analysis.
+func AnalyzeMatch(resume, jobDescription, provider string, cfg config.Config) (Analysis, error) {
+	const maxRetries = 3
+	var lastValidation ValidationResult
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			log.Printf("→ LLM retry %d/%d (prev errors: %v)", attempt, maxRetries-1, lastValidation.Errors)
+		}
+
+		result, err := callLLMOnce(resume, jobDescription, provider, cfg)
+		if err != nil {
+			log.Printf("✗ LLM attempt %d failed: %v", attempt+1, err)
+			lastValidation = ValidationResult{Errors: []string{err.Error()}}
+			continue
+		}
+
+		lastValidation = validateLLMOutput(result, jobDescription, resume)
+		if lastValidation.Valid {
+			result.RetryCount = attempt
+			return result, nil
+		}
+
+		log.Printf("✗ LLM output validation failed (attempt %d): %v", attempt+1, lastValidation.Errors)
+	}
+
+	log.Printf("✗ All %d attempts failed, using fallback analysis", maxRetries)
+	fallback := partialFallbackAnalysis()
+	fallback.RetryCount = maxRetries
+	fallback.UsedFallback = true
+	fallback.ValidationErrors = strings.Join(lastValidation.Errors, "; ")
+	return fallback, nil
 }

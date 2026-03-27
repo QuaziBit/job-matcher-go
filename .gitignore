@@ -1,5 +1,6 @@
 # Binaries
 dist/
+job-matcher-go
 *.exe
 *-linux
 *-darwin
@@ -22,3 +23,5 @@ vendor/
 # OS
 .DS_Store
 Thumbs.db
+
+plan.txt

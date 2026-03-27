@@ -21,20 +21,38 @@ type Job struct {
 	ScrapedAt      time.Time `json:"scraped_at"`
 }
 
+type MatchedSkill struct {
+	Skill         string `json:"skill"`
+	MatchType     string `json:"match_type"`     // exact | partial | inferred
+	JDSnippet     string `json:"jd_snippet"`     // max 100 chars from JD
+	ResumeSnippet string `json:"resume_snippet"` // max 100 chars from resume
+	Category      string `json:"category"`       // populated by NormalizeSkill pipeline
+}
+
 type MissingSkill struct {
-	Skill    string `json:"skill"`
-	Severity string `json:"severity"` // blocker | major | minor
+	Skill           string `json:"skill"`
+	Severity        string `json:"severity"`         // blocker | major | minor
+	RequirementType string `json:"requirement_type"` // hard | preferred | bonus
+	JDSnippet       string `json:"jd_snippet"`       // max 100 chars from JD
+	ClusterGroup    string `json:"cluster_group"`    // populated by skill normalization
 }
 
 type PenaltyBreakdown struct {
-	Blockers       int `json:"blockers"`
-	Majors         int `json:"majors"`
-	Minors         int `json:"minors"`
-	BlockerPenalty int `json:"blocker_penalty"`
-	MajorPenalty   int `json:"major_penalty"`
-	MinorPenalty   int `json:"minor_penalty"`
-	CountPenalty   int `json:"count_penalty"`
-	TotalPenalty   int `json:"total_penalty"`
+	Blockers       int            `json:"blockers"`
+	Majors         int            `json:"majors"`
+	Minors         int            `json:"minors"`
+	BlockerPenalty int            `json:"blocker_penalty"`
+	MajorPenalty   int            `json:"major_penalty"`
+	MinorPenalty   int            `json:"minor_penalty"`
+	CountPenalty   int            `json:"count_penalty"`
+	TotalPenalty   int            `json:"total_penalty"`
+	Clusters       map[string]int `json:"clusters"` // group name → penalty applied
+}
+
+type ResumeSuggestion struct {
+	Title          string `json:"title"`           // short label
+	Detail         string `json:"detail"`          // specific actionable text
+	JobRequirement string `json:"job_requirement"` // which JD requirement this addresses
 }
 
 type Analysis struct {
@@ -45,12 +63,16 @@ type Analysis struct {
 	Score            int              `json:"score"`
 	AdjustedScore    int              `json:"adjusted_score"`
 	PenaltyBreakdown PenaltyBreakdown `json:"penalty_breakdown"`
-	MatchedSkills    []string         `json:"matched_skills"`
+	MatchedSkills    []MatchedSkill   `json:"matched_skills"`
 	MissingSkills    []MissingSkill   `json:"missing_skills"`
 	Reasoning        string           `json:"reasoning"`
 	LLMProvider      string           `json:"llm_provider"`
 	LLMModel         string           `json:"llm_model"`
 	CreatedAt        time.Time        `json:"created_at"`
+	ValidationErrors string             `json:"validation_errors"`
+	RetryCount       int                `json:"retry_count"`
+	UsedFallback     bool               `json:"used_fallback"`
+	Suggestions      []ResumeSuggestion `json:"suggestions"`
 }
 
 type Application struct {
@@ -75,12 +97,29 @@ type JobListItem struct {
 	IsManual      bool   `json:"is_manual"`
 }
 
+type JobTextQuality struct {
+	Level         string   // "ok", "warn", "poor"
+	Issues        []string
+	CharCount     int
+	TechKeywords  int // count of recognized tech terms
+	BuzzwordCount int
+}
+
+type ResumeComparison struct {
+	ResumeA      Analysis
+	ResumeB      Analysis
+	BetterFit    string // label of winning resume
+	BetterReason string // one-sentence explanation
+}
+
 type JobDetailView struct {
 	Job         Job
 	Application Application
 	Analyses    []Analysis
 	Resumes     []Resume
 	OllamaModel string
+	TextQuality JobTextQuality
+	Comparison  *ResumeComparison // nil if < 2 distinct resumes analyzed
 }
 
 type IndexView struct {

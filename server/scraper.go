@@ -316,3 +316,103 @@ func cleanText(s string) string {
 	s = multiSpace.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
 }
+
+var buzzwordList = []string{
+	"synergy", "leverage", "paradigm", "holistic", "proactive",
+	"dynamic", "innovative", "passionate", "rockstar", "ninja",
+	"guru", "wizard", "thought leader", "disruptive", "agile mindset",
+}
+
+// techKeywordList is a sample of recognizable tech terms for density checks.
+var techKeywordList = []string{
+	"python", "go", "java", "javascript", "typescript", "react", "angular", "vue",
+	"node", "docker", "kubernetes", "aws", "azure", "gcp", "terraform", "ci/cd",
+	"sql", "postgresql", "mysql", "mongodb", "redis", "elasticsearch",
+	"api", "rest", "graphql", "microservices", "linux", "git", "jenkins",
+	"splunk", "iam", "terraform", "ansible", "prometheus", "grafana",
+}
+
+// assessJobTextQuality runs deterministic checks on a job description and
+// returns a quality level ("ok", "warn", "poor") with a list of issues found.
+func assessJobTextQuality(text string) JobTextQuality {
+	q := JobTextQuality{
+		Level:     "ok",
+		CharCount: len(text),
+	}
+	lower := strings.ToLower(text)
+
+	if len(text) < 300 {
+		q.Issues = append(q.Issues, "Description too short — analysis reliability may be reduced")
+	}
+
+	// Count non-ASCII characters
+	total := len([]rune(text))
+	if total > 0 {
+		nonASCII := 0
+		for _, r := range text {
+			if r > 127 {
+				nonASCII++
+			}
+		}
+		if float64(nonASCII)/float64(total) > 0.15 {
+			q.Issues = append(q.Issues, "High proportion of non-ASCII characters — possible scraping noise")
+		}
+	}
+
+	// Count bullet lines
+	bulletCount := 0
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "•") || strings.HasPrefix(trimmed, "-") ||
+			strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, "·") {
+			bulletCount++
+		}
+	}
+	if bulletCount > 60 {
+		q.Issues = append(q.Issues, "Bullet-heavy description — limited narrative context for analysis")
+	}
+
+	// Mixed seniority signals
+	juniorSignals := strings.Contains(lower, "junior") || strings.Contains(lower, "entry level") || strings.Contains(lower, "entry-level")
+	seniorSignals := strings.Contains(lower, "senior") || strings.Contains(lower, "5+ years") || strings.Contains(lower, "7+ years")
+	if juniorSignals && seniorSignals {
+		q.Issues = append(q.Issues, "Mixed seniority signals (e.g. 'junior' and 'senior' or high year requirements)")
+	}
+
+	// Buzzword density
+	words := strings.Fields(lower)
+	buzzCount := 0
+	for _, bw := range buzzwordList {
+		if strings.Contains(lower, bw) {
+			buzzCount++
+		}
+	}
+	q.BuzzwordCount = buzzCount
+	if len(words) > 0 && float64(buzzCount)/float64(len(words)) > 0.15 {
+		q.Issues = append(q.Issues, "High buzzword density — description may lack concrete technical requirements")
+	}
+
+	// Tech keyword count
+	techCount := 0
+	for _, kw := range techKeywordList {
+		if strings.Contains(lower, kw) {
+			techCount++
+		}
+	}
+	q.TechKeywords = techCount
+	if len(text) > 500 && techCount == 0 {
+		q.Issues = append(q.Issues, "No recognized tech keywords detected — description may be too vague for reliable analysis")
+	}
+
+	// Determine level
+	switch len(q.Issues) {
+	case 0:
+		q.Level = "ok"
+	case 1:
+		q.Level = "warn"
+	default:
+		q.Level = "poor"
+	}
+
+	return q
+}

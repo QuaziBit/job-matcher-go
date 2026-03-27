@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -226,6 +227,299 @@ func TestComputeAdjustedScore_MajorCapAt2(t *testing.T) {
 	_, breakdown := computeAdjustedScore(5, missing)
 	if breakdown.MajorPenalty > 2 {
 		t.Errorf("major penalty should be capped at 2, got %d", breakdown.MajorPenalty)
+	}
+}
+
+// ── penaltyForSkill (Task 1.3) ────────────────────────────────────────────────
+
+func TestPenaltyForSkill_BonusIsZero(t *testing.T) {
+	s := MissingSkill{Skill: "Ansible", Severity: "blocker", RequirementType: "bonus"}
+	if penaltyForSkill(s) != 0 {
+		t.Error("bonus requirement type should always return 0 penalty")
+	}
+}
+
+func TestPenaltyForSkill_HardBlocker(t *testing.T) {
+	s := MissingSkill{Skill: "Clearance", Severity: "blocker", RequirementType: "hard"}
+	if penaltyForSkill(s) != 2 {
+		t.Errorf("expected 2 for blocker, got %d", penaltyForSkill(s))
+	}
+}
+
+func TestPenaltyForSkill_PreferredMajor(t *testing.T) {
+	s := MissingSkill{Skill: "AWS", Severity: "major", RequirementType: "preferred"}
+	if penaltyForSkill(s) != 1 {
+		t.Errorf("expected 1 for major, got %d", penaltyForSkill(s))
+	}
+}
+
+func TestParseLLMResponse_RequirementTypePopulated(t *testing.T) {
+	raw := `{"score":3,"matched_skills":[],"missing_skills":[{"skill":"AWS","severity":"major","requirement_type":"hard"}],"reasoning":"ok"}`
+	a, err := parseLLMResponse(raw, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a.MissingSkills[0].RequirementType != "hard" {
+		t.Errorf("expected requirement_type 'hard', got %q", a.MissingSkills[0].RequirementType)
+	}
+}
+
+func TestParseLLMResponse_RequirementTypeDefaultsToPreferred(t *testing.T) {
+	raw := `{"score":3,"matched_skills":[],"missing_skills":[{"skill":"Terraform","severity":"minor"}],"reasoning":"ok"}`
+	a, err := parseLLMResponse(raw, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a.MissingSkills[0].RequirementType != "preferred" {
+		t.Errorf("expected default 'preferred', got %q", a.MissingSkills[0].RequirementType)
+	}
+}
+
+// ── Task 1.4 — Evidence-Based Matching (Snippets) ─────────────────────────────
+
+func TestParseLLMResponse_MatchedSkillsV2Structure(t *testing.T) {
+	raw := `{"score":4,"matched_skills":[{"skill":"Go","match_type":"exact","jd_snippet":"5+ years Go experience","resume_snippet":"Built microservices in Go"}],"missing_skills":[],"reasoning":"ok"}`
+	a, err := parseLLMResponse(raw, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(a.MatchedSkills) != 1 {
+		t.Fatalf("expected 1 matched skill, got %d", len(a.MatchedSkills))
+	}
+	ms := a.MatchedSkills[0]
+	if ms.Skill != "Go" {
+		t.Errorf("expected skill 'Go', got %q", ms.Skill)
+	}
+	if ms.MatchType != "exact" {
+		t.Errorf("expected match_type 'exact', got %q", ms.MatchType)
+	}
+	if ms.JDSnippet != "5+ years Go experience" {
+		t.Errorf("expected jd_snippet, got %q", ms.JDSnippet)
+	}
+	if ms.ResumeSnippet != "Built microservices in Go" {
+		t.Errorf("expected resume_snippet, got %q", ms.ResumeSnippet)
+	}
+}
+
+func TestParseLLMResponse_MissingSkillsV2Structure(t *testing.T) {
+	raw := `{"score":3,"matched_skills":[],"missing_skills":[{"skill":"Kubernetes","severity":"major","requirement_type":"preferred","jd_snippet":"Kubernetes orchestration preferred"}],"reasoning":"ok"}`
+	a, err := parseLLMResponse(raw, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(a.MissingSkills) != 1 {
+		t.Fatalf("expected 1 missing skill, got %d", len(a.MissingSkills))
+	}
+	ms := a.MissingSkills[0]
+	if ms.JDSnippet != "Kubernetes orchestration preferred" {
+		t.Errorf("expected jd_snippet, got %q", ms.JDSnippet)
+	}
+}
+
+func TestParseLLMResponse_FallsBackToV1OnFlatMatchedSkills(t *testing.T) {
+	raw := `{"score":3,"matched_skills":["Python","Docker"],"missing_skills":[],"reasoning":"ok"}`
+	a, err := parseLLMResponse(raw, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(a.MatchedSkills) != 2 {
+		t.Fatalf("expected 2 matched skills from v1 fallback, got %d", len(a.MatchedSkills))
+	}
+	if a.MatchedSkills[0].Skill != "Python" {
+		t.Errorf("expected 'Python', got %q", a.MatchedSkills[0].Skill)
+	}
+	if a.MatchedSkills[0].MatchType != "exact" {
+		t.Errorf("v1 fallback should default to match_type 'exact', got %q", a.MatchedSkills[0].MatchType)
+	}
+}
+
+func TestParseLLMResponse_EmptySnippetIsHandled(t *testing.T) {
+	raw := `{"score":4,"matched_skills":[{"skill":"React","match_type":"inferred"}],"missing_skills":[],"reasoning":"ok"}`
+	a, err := parseLLMResponse(raw, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a.MatchedSkills[0].JDSnippet != "" {
+		t.Error("expected empty jd_snippet for inferred match")
+	}
+}
+
+// ── Task 2.2 — Cluster Penalty Caps ───────────────────────────────────────────
+
+func TestComputeAdjustedScore_CloudClusterCapped(t *testing.T) {
+	// AWS, Lambda, S3 are all "cloud" — cluster penalty should be capped at 1
+	missing := []MissingSkill{
+		{Skill: "AWS", Severity: "major", RequirementType: "preferred", ClusterGroup: "cloud"},
+		{Skill: "Lambda", Severity: "major", RequirementType: "preferred", ClusterGroup: "cloud"},
+		{Skill: "S3", Severity: "major", RequirementType: "preferred", ClusterGroup: "cloud"},
+	}
+	_, breakdown := computeAdjustedScore(5, missing)
+	cloudPenalty := breakdown.Clusters["cloud"]
+	if cloudPenalty > 1 {
+		t.Errorf("cloud cluster penalty should be capped at 1, got %d", cloudPenalty)
+	}
+}
+
+func TestComputeAdjustedScore_SecurityClusterHigherCap(t *testing.T) {
+	missing := []MissingSkill{
+		{Skill: "Splunk", Severity: "blocker", RequirementType: "hard", ClusterGroup: "security"},
+		{Skill: "Clearance", Severity: "blocker", RequirementType: "hard", ClusterGroup: "security"},
+	}
+	_, breakdown := computeAdjustedScore(5, missing)
+	secPenalty := breakdown.Clusters["security"]
+	if secPenalty > 2 {
+		t.Errorf("security cluster penalty should be capped at 2, got %d", secPenalty)
+	}
+}
+
+func TestComputeAdjustedScore_MultipleClustersCombine(t *testing.T) {
+	missing := []MissingSkill{
+		{Skill: "AWS", Severity: "major", RequirementType: "preferred", ClusterGroup: "cloud"},
+		{Skill: "Docker", Severity: "major", RequirementType: "preferred", ClusterGroup: "devops"},
+	}
+	_, breakdown := computeAdjustedScore(5, missing)
+	// Each cluster contributes up to 1, so total cluster penalty = 2
+	if breakdown.TotalPenalty < 2 {
+		t.Errorf("expected at least 2 total from two clusters, got %d", breakdown.TotalPenalty)
+	}
+}
+
+func TestClusterPenaltyCap_KnownGroups(t *testing.T) {
+	if clusterPenaltyCap("security") != 2 {
+		t.Error("security cap should be 2")
+	}
+	if clusterPenaltyCap("cloud") != 1 {
+		t.Error("cloud cap should be 1")
+	}
+}
+
+func TestClusterPenaltyCap_DefaultCap(t *testing.T) {
+	if clusterPenaltyCap("other") != 1 {
+		t.Error("default cap should be 1")
+	}
+	if clusterPenaltyCap("frontend") != 1 {
+		t.Error("frontend cap should be 1")
+	}
+}
+
+// ── Task 2.3 — LLM Output Validation ──────────────────────────────────────────
+
+func TestValidateLLMOutput_ValidResult(t *testing.T) {
+	a := Analysis{
+		Score:         4,
+		MatchedSkills: []MatchedSkill{{Skill: "Go"}},
+		MissingSkills: []MissingSkill{{Skill: "AWS", Severity: "major"}},
+		Reasoning:     "Good match.",
+	}
+	r := validateLLMOutput(a, "long jd "+strings.Repeat("x", 500), "resume")
+	if !r.Valid {
+		t.Errorf("expected valid, got errors: %v", r.Errors)
+	}
+}
+
+func TestValidateLLMOutput_ScoreOutOfRange(t *testing.T) {
+	a := Analysis{Score: 9, Reasoning: "ok"}
+	r := validateLLMOutput(a, "", "")
+	if r.Valid {
+		t.Error("expected invalid for score 9")
+	}
+}
+
+func TestValidateLLMOutput_SkillInBothMatchedAndMissing(t *testing.T) {
+	a := Analysis{
+		Score:         3,
+		MatchedSkills: []MatchedSkill{{Skill: "AWS"}},
+		MissingSkills: []MissingSkill{{Skill: "AWS", Severity: "major"}},
+		Reasoning:     "ok",
+	}
+	r := validateLLMOutput(a, "", "")
+	if r.Valid {
+		t.Error("expected invalid when skill in both matched and missing")
+	}
+}
+
+func TestValidateLLMOutput_InvalidSeverity(t *testing.T) {
+	a := Analysis{
+		Score:         3,
+		MissingSkills: []MissingSkill{{Skill: "AWS", Severity: "critical"}},
+		Reasoning:     "ok",
+	}
+	r := validateLLMOutput(a, "", "")
+	if r.Valid {
+		t.Error("expected invalid for unknown severity 'critical'")
+	}
+}
+
+func TestValidateLLMOutput_EmptyReasoning(t *testing.T) {
+	a := Analysis{Score: 3, Reasoning: "   "}
+	r := validateLLMOutput(a, "", "")
+	if r.Valid {
+		t.Error("expected invalid for empty reasoning")
+	}
+}
+
+func TestValidateLLMOutput_NoMatchedSkillsOnRichJD(t *testing.T) {
+	a := Analysis{
+		Score:     3,
+		Reasoning: "ok",
+	}
+	r := validateLLMOutput(a, strings.Repeat("x", 600), "resume")
+	if r.Valid {
+		t.Error("expected invalid: no matched skills for rich JD")
+	}
+}
+
+func TestPartialFallbackAnalysis_ReturnsValidStruct(t *testing.T) {
+	fb := partialFallbackAnalysis()
+	if fb.Score < 1 || fb.Score > 5 {
+		t.Errorf("fallback score must be 1-5, got %d", fb.Score)
+	}
+	if fb.Reasoning == "" {
+		t.Error("fallback reasoning should not be empty")
+	}
+}
+
+// ── Task 3.1 — Resume Suggestions ─────────────────────────────────────────────
+
+func TestParseLLMResponse_SuggestionsPopulated(t *testing.T) {
+	raw := `{"score":3,"matched_skills":[],"missing_skills":[],"reasoning":"ok","suggestions":[{"title":"Clarify AWS","detail":"Add specifics about S3 and EC2.","job_requirement":"AWS required"}]}`
+	a, err := parseLLMResponse(raw, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(a.Suggestions) != 1 {
+		t.Fatalf("expected 1 suggestion, got %d", len(a.Suggestions))
+	}
+	if a.Suggestions[0].Title != "Clarify AWS" {
+		t.Errorf("expected title 'Clarify AWS', got %q", a.Suggestions[0].Title)
+	}
+}
+
+func TestParseLLMResponse_SuggestionsEmptyIsValid(t *testing.T) {
+	raw := `{"score":4,"matched_skills":[],"missing_skills":[],"reasoning":"ok"}`
+	a, err := parseLLMResponse(raw, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a.Suggestions != nil && len(a.Suggestions) != 0 {
+		t.Errorf("expected empty suggestions, got %d", len(a.Suggestions))
+	}
+}
+
+func TestParseLLMResponse_SuggestionsMaxThree(t *testing.T) {
+	suggestions := `[
+		{"title":"A","detail":"d","job_requirement":"r"},
+		{"title":"B","detail":"d","job_requirement":"r"},
+		{"title":"C","detail":"d","job_requirement":"r"},
+		{"title":"D","detail":"d","job_requirement":"r"}
+	]`
+	raw := `{"score":3,"matched_skills":[],"missing_skills":[],"reasoning":"ok","suggestions":` + suggestions + `}`
+	a, err := parseLLMResponse(raw, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(a.Suggestions) > 3 {
+		t.Errorf("suggestions should be capped at 3, got %d", len(a.Suggestions))
 	}
 }
 

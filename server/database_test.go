@@ -220,7 +220,7 @@ func TestDBAnalysis_InsertAndFetch(t *testing.T) {
 		PenaltyBreakdown: PenaltyBreakdown{
 			Blockers: 1, BlockerPenalty: 2, TotalPenalty: 2,
 		},
-		MatchedSkills: []string{"Python", "Docker"},
+		MatchedSkills: []MatchedSkill{{Skill: "Python", MatchType: "exact"}, {Skill: "Docker", MatchType: "exact"}},
 		MissingSkills: []MissingSkill{
 			{Skill: "TS/SCI Clearance", Severity: "blocker"},
 		},
@@ -883,5 +883,172 @@ func TestDBJobList_Pagination_PageBeyondRange(t *testing.T) {
 	}
 	if len(items) != 0 {
 		t.Errorf("expected 0 items on out-of-range page, got %d", len(items))
+	}
+}
+
+// ── Task 1.4 — v2 matched/missing skills DB round-trip ────────────────────────
+
+func TestDBAnalysis_InsertsV2MatchedSkills(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	rid, _ := dbInsertResume("v2test", "resume content")
+	jid, _ := dbInsertJob("https://example.com/v2", "V2 Job", "Co", "DC", "desc")
+
+	a := Analysis{
+		JobID:    jid,
+		ResumeID: rid,
+		Score:    4, AdjustedScore: 4,
+		MatchedSkills: []MatchedSkill{
+			{Skill: "Go", MatchType: "exact", JDSnippet: "5+ years Go", ResumeSnippet: "Built in Go"},
+		},
+		MissingSkills: []MissingSkill{},
+		Reasoning:     "ok", LLMProvider: "anthropic", LLMModel: "claude-opus-4-5",
+	}
+	_, err := dbInsertAnalysis(a)
+	if err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	results, err := dbGetAnalysesByJobID(jid)
+	if err != nil {
+		t.Fatalf("fetch failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one analysis")
+	}
+	ms := results[0].MatchedSkills
+	if len(ms) != 1 {
+		t.Fatalf("expected 1 matched skill, got %d", len(ms))
+	}
+	if ms[0].JDSnippet != "5+ years Go" {
+		t.Errorf("expected jd_snippet '5+ years Go', got %q", ms[0].JDSnippet)
+	}
+	if ms[0].ResumeSnippet != "Built in Go" {
+		t.Errorf("expected resume_snippet 'Built in Go', got %q", ms[0].ResumeSnippet)
+	}
+}
+
+func TestDBAnalysis_InsertsV2MissingSkills(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	rid, _ := dbInsertResume("v2miss", "resume content")
+	jid, _ := dbInsertJob("https://example.com/v2m", "V2 Miss Job", "Co", "DC", "desc")
+
+	a := Analysis{
+		JobID:    jid,
+		ResumeID: rid,
+		Score:    3, AdjustedScore: 2,
+		MatchedSkills: []MatchedSkill{},
+		MissingSkills: []MissingSkill{
+			{Skill: "Kubernetes", Severity: "major", RequirementType: "preferred", JDSnippet: "K8s orchestration preferred"},
+		},
+		Reasoning: "ok", LLMProvider: "anthropic", LLMModel: "claude-opus-4-5",
+	}
+	_, err := dbInsertAnalysis(a)
+	if err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	results, err := dbGetAnalysesByJobID(jid)
+	if err != nil {
+		t.Fatalf("fetch failed: %v", err)
+	}
+	ms := results[0].MissingSkills
+	if len(ms) != 1 {
+		t.Fatalf("expected 1 missing skill, got %d", len(ms))
+	}
+	if ms[0].JDSnippet != "K8s orchestration preferred" {
+		t.Errorf("expected jd_snippet, got %q", ms[0].JDSnippet)
+	}
+}
+
+func TestDBAnalysis_FallsBackToV1ForOldRecords(t *testing.T) {
+	// Insert directly with only v1 columns populated (simulates old DB record)
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	rid, _ := dbInsertResume("old", "resume")
+	jid, _ := dbInsertJob("https://example.com/old", "Old Job", "Co", "DC", "desc")
+
+	_, err := db.Exec(`
+		INSERT INTO analyses (job_id, resume_id, score, adjusted_score, penalty_breakdown,
+		matched_skills, missing_skills, reasoning, llm_provider, llm_model)
+		VALUES (?, ?, 3, 3, '{}', '["Python","Docker"]', '[]', 'ok', 'anthropic', 'claude-opus-4-5')`,
+		jid, rid)
+	if err != nil {
+		t.Fatalf("raw insert failed: %v", err)
+	}
+
+	results, err := dbGetAnalysesByJobID(jid)
+	if err != nil {
+		t.Fatalf("fetch failed: %v", err)
+	}
+	if len(results[0].MatchedSkills) != 2 {
+		t.Fatalf("expected 2 matched skills from v1 fallback, got %d", len(results[0].MatchedSkills))
+	}
+	if results[0].MatchedSkills[0].Skill != "Python" {
+		t.Errorf("expected 'Python' from v1 fallback, got %q", results[0].MatchedSkills[0].Skill)
+	}
+}
+
+// ── Task 3.1 — Suggestions DB round-trip ─────────────────────────────────────
+
+func TestDBAnalysis_InsertAndFetchSuggestions(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	rid, _ := dbInsertResume("sugg", "resume")
+	jid, _ := dbInsertJob("https://example.com/sugg", "Sugg Job", "Co", "DC", "desc")
+
+	a := Analysis{
+		JobID: jid, ResumeID: rid,
+		Score: 3, AdjustedScore: 3,
+		MatchedSkills: []MatchedSkill{},
+		MissingSkills: []MissingSkill{},
+		Reasoning:     "ok", LLMProvider: "anthropic", LLMModel: "m",
+		Suggestions: []ResumeSuggestion{
+			{Title: "Clarify AWS", Detail: "Add S3/EC2 details.", JobRequirement: "AWS required"},
+		},
+	}
+	_, err := dbInsertAnalysis(a)
+	if err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+	results, err := dbGetAnalysesByJobID(jid)
+	if err != nil {
+		t.Fatalf("fetch failed: %v", err)
+	}
+	if len(results[0].Suggestions) != 1 {
+		t.Fatalf("expected 1 suggestion, got %d", len(results[0].Suggestions))
+	}
+	if results[0].Suggestions[0].Title != "Clarify AWS" {
+		t.Errorf("expected 'Clarify AWS', got %q", results[0].Suggestions[0].Title)
+	}
+}
+
+func TestDBAnalysis_EmptySuggestionsHandled(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	rid, _ := dbInsertResume("nosugg", "resume")
+	jid, _ := dbInsertJob("https://example.com/nosugg", "No Sugg Job", "Co", "DC", "desc")
+
+	a := Analysis{
+		JobID: jid, ResumeID: rid,
+		Score: 4, AdjustedScore: 4,
+		MatchedSkills: []MatchedSkill{},
+		MissingSkills: []MissingSkill{},
+		Reasoning:     "ok", LLMProvider: "anthropic", LLMModel: "m",
+	}
+	_, err := dbInsertAnalysis(a)
+	if err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+	results, _ := dbGetAnalysesByJobID(jid)
+	// nil or empty slice are both fine
+	if len(results[0].Suggestions) != 0 {
+		t.Errorf("expected 0 suggestions, got %d", len(results[0].Suggestions))
 	}
 }
