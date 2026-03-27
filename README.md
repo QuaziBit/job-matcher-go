@@ -400,6 +400,16 @@ go vet ./...               # catch common mistakes
 
 ---
 
+# Job Matcher — Go Version
+
+> **Branch: v2-advanced**
+> This branch includes advanced analysis features — evidence snippets,
+> resume suggestions, skill normalization, duplicate gap caps, and resume
+> comparison mode. LLM response times are longer than the standard version.
+> For the stable, faster version see the [main branch](https://github.com/QuaziBit/job-matcher-go/tree/main).
+
+---
+
 ## Related
 
 - **Python version** → [github.com/QuaziBit/job-matcher-py](https://github.com/QuaziBit/job-matcher-py)
