@@ -400,6 +400,21 @@ go vet ./...               # catch common mistakes
 
 ---
 
+## Extra Styles
+
+The `extra-styles` folder contains alternative UI style variants for reference:
+
+- `job-matcher-go-evidence-fix-category-grouping.zip` — matched skills grouped
+  by category (BACKEND / FRONTEND / DEVOPS / OTHER) with labeled sections
+- `job-matcher-go-pill-fix-no-category-grouping.zip` — matched skills as a
+  single flat horizontal flow (current default, matches Python version)
+
+To switch variants, replace `server/embedded/static/css/style.css`,
+`server/embedded/static/js/app.js`, and
+`server/embedded/templates/job_detail.html` with the files from the zip.
+
+---
+
 **Branch: v3-advanced**
 This branch builds on v2-advanced and adds Analysis Mode (fast / standard /
 detailed), a progress bar with elapsed time tracking, duration and mode
