@@ -400,13 +400,23 @@ go vet ./...               # catch common mistakes
 
 ---
 
-# Job Matcher — Go Version
+**Branch: v3-advanced**
+This branch builds on v2-advanced and adds Analysis Mode (fast / standard /
+detailed), a progress bar with elapsed time tracking, duration and mode
+stored per analysis, and dynamic context window resolution for Ollama.
 
-> **Branch: v2-advanced**
-> This branch includes advanced analysis features — evidence snippets,
-> resume suggestions, skill normalization, duplicate gap caps, and resume
-> comparison mode. LLM response times are longer than the standard version.
-> For the stable, faster version see the [main branch](https://github.com/QuaziBit/job-matcher-go/tree/main).
+**Local model compatibility:**
+
+- `llama3.1:8b` — works in all modes (fast / standard / detailed)
+- `phi3.5:3.8b` — works in all modes (fast / standard / detailed)
+- `gemma3:27b` — works in fast and standard modes; detailed mode may take
+   15-20+ minutes on consumer hardware, increase `OLLAMA_TIMEOUT` to 2000s+
+- `nemotron-3-nano` — not compatible, ignores structured output format
+- Anthropic — works reliably in all modes
+For the advanced features without Analysis Mode see
+[v2-advanced](https://github.com/QuaziBit/job-matcher-go/tree/v2-advanced).
+For the stable faster version see
+[main](https://github.com/QuaziBit/job-matcher-go/tree/main).
 
 ---
 
