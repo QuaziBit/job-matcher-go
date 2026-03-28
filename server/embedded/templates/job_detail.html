@@ -246,7 +246,7 @@
           <div class="pill-list">
             {{range .MissingSkills}}
             <div class="skill-evidence">
-              <span class="pill {{if eq .Severity "blocker"}}pill-red{{else if eq .Severity "major"}}pill-orange{{else}}pill-dim{{end}}"
+              <span class="pill {{if eq .Severity "blocker"}}pill-red{{else if eq .Severity "major"}}pill-orange{{else}}pill-dim{{end}}{{if .RequirementType}} pill-has-badge{{end}}"
                     title="{{.Severity}}{{if .RequirementType}} · {{.RequirementType}}{{end}}">
                 {{if .RequirementType}}<span class="req-type req-{{.RequirementType}}">{{upper .RequirementType}}</span>{{end}}
                 {{.Skill}}
