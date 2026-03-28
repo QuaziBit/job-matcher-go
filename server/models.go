@@ -72,6 +72,8 @@ type Analysis struct {
 	ValidationErrors string             `json:"validation_errors"`
 	RetryCount       int                `json:"retry_count"`
 	UsedFallback     bool               `json:"used_fallback"`
+	DurationSeconds  int                `json:"duration_seconds"`
+	AnalysisMode     string             `json:"analysis_mode"`
 	Suggestions      []ResumeSuggestion `json:"suggestions"`
 }
 
@@ -113,13 +115,14 @@ type ResumeComparison struct {
 }
 
 type JobDetailView struct {
-	Job         Job
-	Application Application
-	Analyses    []Analysis
-	Resumes     []Resume
-	OllamaModel string
-	TextQuality JobTextQuality
-	Comparison  *ResumeComparison // nil if < 2 distinct resumes analyzed
+	Job          Job
+	Application  Application
+	Analyses     []Analysis
+	Resumes      []Resume
+	OllamaModel  string
+	AnalysisMode string
+	TextQuality  JobTextQuality
+	Comparison   *ResumeComparison // nil if < 2 distinct resumes analyzed
 }
 
 type IndexView struct {

@@ -76,7 +76,20 @@
       </div>
       <button id="analyze-btn" class="btn btn-primary"
               onclick="analyzeJob({{.Job.ID}})"
+              data-mode="{{.AnalysisMode}}"
               {{if empty .Resumes}}disabled{{end}}>Run Analysis</button>
+
+      <!-- Progress bar — shown while analysis is running -->
+      <div id="analysis-progress" class="analysis-progress hidden">
+        <div class="progress-header">
+          <span class="progress-spinner"></span>
+          <span id="progress-label">Analyzing...</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <div class="progress-meta" id="progress-meta"></div>
+      </div>
 
       <!-- Scoring explanation matrix -->
       <details class="score-explainer">
@@ -157,7 +170,7 @@
           </div>
           <div class="score-meter" id="meter-{{.ID}}"></div>
           <div class="analysis-meta" style="flex:1;">
-            {{.ResumeLabel}} · {{.LLMProvider}}{{if .LLMModel}} ({{.LLMModel}}){{end}} · {{.CreatedAt.Format "2006-01-02 15:04"}}
+            {{.ResumeLabel}} · {{.LLMProvider}}{{if .LLMModel}} ({{.LLMModel}}){{end}} · {{.CreatedAt.Format "2006-01-02 15:04"}}{{if .DurationSeconds}} · {{formatDuration .DurationSeconds}}{{end}}{{if .AnalysisMode}} · {{.AnalysisMode}}{{end}}
           </div>
           <button class="btn btn-danger btn-sm" style="margin-left:10px;flex-shrink:0;"
                   onclick="deleteAnalysis({{.ID}})" title="Delete this analysis">✕</button>

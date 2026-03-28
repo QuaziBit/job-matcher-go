@@ -10,7 +10,7 @@ import (
 
 func TestParseLLMResponse_ValidJSON(t *testing.T) {
 	raw := `{"score": 4, "matched_skills": ["Python", "Docker"], "missing_skills": [{"skill": "Kubernetes", "severity": "major"}], "reasoning": "Good match."}`
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestParseLLMResponse_ValidJSON(t *testing.T) {
 
 func TestParseLLMResponse_StripsFences(t *testing.T) {
 	raw := "```json\n{\"score\": 3, \"matched_skills\": [], \"missing_skills\": [], \"reasoning\": \"ok\"}\n```"
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestParseLLMResponse_StripsFences(t *testing.T) {
 
 func TestParseLLMResponse_InvalidScore(t *testing.T) {
 	raw := `{"score": 9, "matched_skills": [], "missing_skills": [], "reasoning": "bad"}`
-	_, err := parseLLMResponse(raw, "")
+	_, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err == nil {
 		t.Error("expected error for score 9")
 	}
@@ -49,14 +49,14 @@ func TestParseLLMResponse_InvalidScore(t *testing.T) {
 
 func TestParseLLMResponse_ScoreZeroInvalid(t *testing.T) {
 	raw := `{"score": 0, "matched_skills": [], "missing_skills": [], "reasoning": "bad"}`
-	_, err := parseLLMResponse(raw, "")
+	_, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err == nil {
 		t.Error("expected error for score 0")
 	}
 }
 
 func TestParseLLMResponse_NoJSON(t *testing.T) {
-	_, err := parseLLMResponse("no json here at all", "")
+	_, err := parseLLMResponse("no json here at all", "", modeConfigs["detailed"])
 	if err == nil {
 		t.Error("expected error for response with no JSON")
 	}
@@ -64,7 +64,7 @@ func TestParseLLMResponse_NoJSON(t *testing.T) {
 
 func TestParseLLMResponse_JSONEmbeddedInProse(t *testing.T) {
 	raw := `Here is my eval: {"score": 4, "matched_skills": ["Go"], "missing_skills": [], "reasoning": "Good."} Done.`
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestParseLLMResponse_JSONEmbeddedInProse(t *testing.T) {
 
 func TestParseLLMResponse_FlatMissingSkillsAccepted(t *testing.T) {
 	raw := `{"score": 3, "matched_skills": ["Python"], "missing_skills": ["Kubernetes", "Terraform"], "reasoning": "ok"}`
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestParseLLMResponse_AllScoreBoundaries(t *testing.T) {
 			"score": score, "matched_skills": []string{},
 			"missing_skills": []interface{}{}, "reasoning": "ok",
 		})
-		a, err := parseLLMResponse(string(raw), "")
+		a, err := parseLLMResponse(string(raw), "", modeConfigs["detailed"])
 		if err != nil {
 			t.Errorf("score %d should be valid, got error: %v", score, err)
 		}
@@ -255,7 +255,7 @@ func TestPenaltyForSkill_PreferredMajor(t *testing.T) {
 
 func TestParseLLMResponse_RequirementTypePopulated(t *testing.T) {
 	raw := `{"score":3,"matched_skills":[],"missing_skills":[{"skill":"AWS","severity":"major","requirement_type":"hard"}],"reasoning":"ok"}`
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestParseLLMResponse_RequirementTypePopulated(t *testing.T) {
 
 func TestParseLLMResponse_RequirementTypeDefaultsToPreferred(t *testing.T) {
 	raw := `{"score":3,"matched_skills":[],"missing_skills":[{"skill":"Terraform","severity":"minor"}],"reasoning":"ok"}`
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestParseLLMResponse_RequirementTypeDefaultsToPreferred(t *testing.T) {
 
 func TestParseLLMResponse_MatchedSkillsV2Structure(t *testing.T) {
 	raw := `{"score":4,"matched_skills":[{"skill":"Go","match_type":"exact","jd_snippet":"5+ years Go experience","resume_snippet":"Built microservices in Go"}],"missing_skills":[],"reasoning":"ok"}`
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestParseLLMResponse_MatchedSkillsV2Structure(t *testing.T) {
 
 func TestParseLLMResponse_MissingSkillsV2Structure(t *testing.T) {
 	raw := `{"score":3,"matched_skills":[],"missing_skills":[{"skill":"Kubernetes","severity":"major","requirement_type":"preferred","jd_snippet":"Kubernetes orchestration preferred"}],"reasoning":"ok"}`
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestParseLLMResponse_MissingSkillsV2Structure(t *testing.T) {
 
 func TestParseLLMResponse_FallsBackToV1OnFlatMatchedSkills(t *testing.T) {
 	raw := `{"score":3,"matched_skills":["Python","Docker"],"missing_skills":[],"reasoning":"ok"}`
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestParseLLMResponse_FallsBackToV1OnFlatMatchedSkills(t *testing.T) {
 
 func TestParseLLMResponse_EmptySnippetIsHandled(t *testing.T) {
 	raw := `{"score":4,"matched_skills":[{"skill":"React","match_type":"inferred"}],"missing_skills":[],"reasoning":"ok"}`
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -439,14 +439,17 @@ func TestValidateLLMOutput_SkillInBothMatchedAndMissing(t *testing.T) {
 }
 
 func TestValidateLLMOutput_InvalidSeverity(t *testing.T) {
-	a := Analysis{
-		Score:         3,
-		MissingSkills: []MissingSkill{{Skill: "AWS", Severity: "critical"}},
-		Reasoning:     "ok",
+	// "critical" is now normalized to "blocker" in parseLLMResponse before
+	// validation runs — validateLLMOutput only sees valid values.
+	// This test verifies normalization works correctly instead.
+	if got := normalizeSeverity("critical"); got != "blocker" {
+		t.Errorf("normalizeSeverity(\"critical\") = %q, want \"blocker\"", got)
 	}
-	r := validateLLMOutput(a, "", "")
-	if r.Valid {
-		t.Error("expected invalid for unknown severity 'critical'")
+	if got := normalizeSeverity("high"); got != "major" {
+		t.Errorf("normalizeSeverity(\"high\") = %q, want \"major\"", got)
+	}
+	if got := normalizeSeverity("low"); got != "minor" {
+		t.Errorf("normalizeSeverity(\"low\") = %q, want \"minor\"", got)
 	}
 }
 
@@ -483,7 +486,7 @@ func TestPartialFallbackAnalysis_ReturnsValidStruct(t *testing.T) {
 
 func TestParseLLMResponse_SuggestionsPopulated(t *testing.T) {
 	raw := `{"score":3,"matched_skills":[],"missing_skills":[],"reasoning":"ok","suggestions":[{"title":"Clarify AWS","detail":"Add specifics about S3 and EC2.","job_requirement":"AWS required"}]}`
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -497,7 +500,7 @@ func TestParseLLMResponse_SuggestionsPopulated(t *testing.T) {
 
 func TestParseLLMResponse_SuggestionsEmptyIsValid(t *testing.T) {
 	raw := `{"score":4,"matched_skills":[],"missing_skills":[],"reasoning":"ok"}`
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -514,7 +517,7 @@ func TestParseLLMResponse_SuggestionsMaxThree(t *testing.T) {
 		{"title":"D","detail":"d","job_requirement":"r"}
 	]`
 	raw := `{"score":3,"matched_skills":[],"missing_skills":[],"reasoning":"ok","suggestions":` + suggestions + `}`
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -527,7 +530,7 @@ func TestParseLLMResponse_SuggestionsMaxThree(t *testing.T) {
 
 func TestParseLLMResponse_EmptySkillLists(t *testing.T) {
 	raw := `{"score": 3, "matched_skills": [], "missing_skills": [], "reasoning": "No skills detected."}`
-	a, err := parseLLMResponse(raw, "")
+	a, err := parseLLMResponse(raw, "", modeConfigs["detailed"])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

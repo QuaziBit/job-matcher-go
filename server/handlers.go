@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuaziBit/job-matcher-go/config"
 )
@@ -182,13 +183,14 @@ func handleJobDetail(w http.ResponseWriter, r *http.Request) {
 		log.Printf("✗ dbGetResumes error (job detail): %v", err)
 	}
 	renderTemplate(w, "job_detail.html", JobDetailView{
-		Job:         *job,
-		Application: *app,
-		Analyses:    analyses,
-		Resumes:     resumes,
-		OllamaModel: appCfg.OllamaModel,
-		TextQuality: assessJobTextQuality(job.RawDescription),
-		Comparison:  buildComparison(analyses),
+		Job:          *job,
+		Application:  *app,
+		Analyses:     analyses,
+		Resumes:      resumes,
+		OllamaModel:  appCfg.OllamaModel,
+		AnalysisMode: appCfg.AnalysisMode,
+		TextQuality:  assessJobTextQuality(job.RawDescription),
+		Comparison:   buildComparison(analyses),
 	})
 }
 
@@ -506,11 +508,13 @@ func handleAnalyzeJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("→ Analyzing job=%d resume=%d provider=%s", jobID, resumeID, provider)
+	startTime := time.Now()
 	analysis, err := AnalyzeMatch(resume.Content, job.RawDescription, provider, appCfg)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("analysis failed: %v", err))
 		return
 	}
+	analysis.DurationSeconds = int(time.Since(startTime).Seconds())
 
 	analysis.JobID = jobID
 	analysis.ResumeID = resumeID

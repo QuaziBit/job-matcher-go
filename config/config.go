@@ -24,6 +24,9 @@ type Config struct {
 	OllamaBaseURL        string `json:"ollama_base_url"`
 	OllamaModel          string `json:"ollama_model"`
 	OllamaTimeoutSeconds int    `json:"ollama_timeout_seconds"`
+
+	// Analysis
+	AnalysisMode string `json:"analysis_mode"` // fast | standard | detailed
 }
 
 // Defaults returns a Config populated with sensible defaults.
@@ -36,6 +39,7 @@ func Defaults() Config {
 		OllamaBaseURL:        "http://localhost:11434",
 		OllamaModel:          "llama3.1:8b",
 		OllamaTimeoutSeconds: 600,
+		AnalysisMode:         "standard",
 	}
 }
 
@@ -78,6 +82,15 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.DBPath == "" {
 		cfg.DBPath = "job_matcher.db"
+	}
+	if cfg.AnalysisMode == "" {
+		cfg.AnalysisMode = "standard"
+	}
+	switch cfg.AnalysisMode {
+	case "fast", "standard", "detailed":
+		// valid
+	default:
+		cfg.AnalysisMode = "standard"
 	}
 
 	return cfg, nil

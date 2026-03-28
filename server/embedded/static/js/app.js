@@ -201,44 +201,99 @@ async function addJobManual() {
 // =============================================== //
 // == Analyze Job ================================ //
 // =============================================== //
+// =============================================== //
+// == Progress Bar =============================== //
+// =============================================== //
+
+const MODE_ESTIMATES = { fast: 30, standard: 90, detailed: 240 };
+let _progressTimer = null;
+let _progressStart = null;
+
+function startProgress(provider, model, mode) {
+  const el    = document.getElementById('analysis-progress');
+  const label = document.getElementById('progress-label');
+  const fill  = document.getElementById('progress-fill');
+  const meta  = document.getElementById('progress-meta');
+  const est   = MODE_ESTIMATES[mode] || 90;
+  if (el) el.classList.remove('hidden');
+  _progressStart = Date.now();
+  if (label) label.textContent = `Analyzing with ${model} · ${mode} mode`;
+  if (fill)  fill.style.width = '0%';
+  _progressTimer = setInterval(() => {
+    const elapsed = (Date.now() - _progressStart) / 1000;
+    const pct     = Math.min(elapsed / est * 100, 95);
+    if (fill) fill.style.width = pct + '%';
+    if (meta) meta.textContent = `${formatElapsed(elapsed)} elapsed · ~${formatElapsed(est)} estimated`;
+  }, 500);
+  log('startProgress', `provider=${provider} model=${model} mode=${mode} est=${est}s`);
+}
+
+function stopProgress() {
+  clearInterval(_progressTimer);
+  _progressTimer = null;
+  const fill = document.getElementById('progress-fill');
+  if (fill) fill.style.width = '100%';
+  setTimeout(() => {
+    const el = document.getElementById('analysis-progress');
+    if (el) el.classList.add('hidden');
+  }, 400);
+}
+
+function formatElapsed(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return m > 0 ? `${m}:${s.toString().padStart(2, '0')}` : `${s}s`;
+}
+
 async function analyzeJob(jobId) {
-  const resumeSelect  = document.getElementById("analyze-resume");
+  const resumeSelect  = document.getElementById('analyze-resume');
   const providerInput = document.querySelector('input[name="provider"]:checked');
-  const btn           = document.getElementById("analyze-btn");
+  const btn           = document.getElementById('analyze-btn');
 
-  if (!resumeSelect) { logErr("analyzeJob", "#analyze-resume not found"); return; }
-  if (!resumeSelect.value) { toast("Please select a resume first", "error"); return; }
+  if (!resumeSelect) { logErr('analyzeJob', '#analyze-resume not found'); return; }
+  if (!resumeSelect.value) { toast('Please select a resume first', 'error'); return; }
 
-  const provider = providerInput ? providerInput.value : "anthropic";
-  log("analyzeJob", `jobId=${jobId} resumeId=${resumeSelect.value} provider=${provider}`);
+  const provider = providerInput ? providerInput.value : 'anthropic';
+  const mode     = btn ? (btn.dataset.mode || 'standard') : 'standard';
 
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Analyzing…';
+  // Build model label for progress bar
+  const ollamaLabel = document.querySelector('label[for="p-ollama"]');
+  const model = provider === 'ollama'
+    ? (ollamaLabel ? ollamaLabel.textContent.trim() : 'Ollama')
+    : 'claude-opus-4-5';
+
+  log('analyzeJob', `jobId=${jobId} resumeId=${resumeSelect.value} provider=${provider} mode=${mode}`);
+
+  btn.disabled    = true;
+  btn.textContent = 'Analyzing…';
+  startProgress(provider, model, mode);
 
   const fd = new FormData();
-  fd.append("resume_id", resumeSelect.value);
-  fd.append("provider",  provider);
+  fd.append('resume_id', resumeSelect.value);
+  fd.append('provider',  provider);
 
   try {
-    log("analyzeJob", `POST /api/jobs/${jobId}/analyze`);
-    const res  = await fetch(`/api/jobs/${jobId}/analyze`, { method: "POST", body: fd });
+    log('analyzeJob', `POST /api/jobs/${jobId}/analyze`);
+    const res  = await fetch(`/api/jobs/${jobId}/analyze`, { method: 'POST', body: fd });
     const data = await res.json();
-    log("analyzeJob", `response status=${res.status}`, data);
+    log('analyzeJob', `response status=${res.status}`, data);
+    stopProgress();
 
     if (!res.ok) {
-      logErr("analyzeJob", `server error ${res.status}:`, data.error);
-      toast(data.error || "Analysis failed", "error");
-      btn.disabled = false; btn.textContent = "Run Analysis";
+      logErr('analyzeJob', `server error ${res.status}:`, data.error);
+      toast(data.error || 'Analysis failed', 'error');
+      btn.disabled = false; btn.textContent = 'Run Analysis';
       return;
     }
-    log("analyzeJob", `success score=${data.score} adjusted=${data.adjusted_score}`);
-    toast(`✓ Score: ${data.adjusted_score}/5 (raw ${data.score}/5)`, "success");
-    btn.disabled = false; btn.textContent = "Run Analysis";
+    log('analyzeJob', `success score=${data.score} adjusted=${data.adjusted_score}`);
+    toast(`✓ Score: ${data.adjusted_score}/5 (raw ${data.score}/5)`, 'success');
+    btn.disabled = false; btn.textContent = 'Run Analysis';
     setTimeout(() => location.reload(), 800);
   } catch(err) {
-    logErr("analyzeJob", "fetch threw:", err);
-    toast("Network error", "error");
-    btn.disabled = false; btn.textContent = "Run Analysis";
+    stopProgress();
+    logErr('analyzeJob', 'fetch threw:', err);
+    toast('Network error', 'error');
+    btn.disabled = false; btn.textContent = 'Run Analysis';
   }
 }
 

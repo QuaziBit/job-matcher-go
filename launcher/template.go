@@ -5,6 +5,14 @@ import (
 	"github.com/QuaziBit/job-matcher-go/config"
 )
 
+// checkedIf returns "checked" if condition is true, empty string otherwise.
+func checkedIf(condition bool) string {
+	if condition {
+		return "checked"
+	}
+	return ""
+}
+
 func renderLauncherPage(cfg config.Config) string {
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
@@ -36,6 +44,12 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);
   letter-spacing:0.1em;color:var(--text-dim);margin-bottom:12px;
   padding-bottom:6px;border-bottom:1px solid var(--border);}
 .form-row{margin-bottom:14px;}
+.toggle-group{display:flex;gap:8px;flex-wrap:wrap;}
+.toggle-option{display:flex;flex-direction:column;flex:1;min-width:100px;border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;cursor:pointer;transition:border-color .15s;}
+.toggle-option:has(input:checked){border-color:var(--amber);background:rgba(245,158,11,.06);}
+.toggle-option input{display:none;}
+.toggle-option span{font-size:12px;font-weight:600;color:var(--text);text-transform:none;letter-spacing:0;margin:0;}
+.toggle-option small{font-size:10px;color:var(--text-dim);margin-top:3px;text-transform:none;letter-spacing:0;}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
 label{display:block;font-size:11px;font-weight:500;color:var(--text-dim);
   letter-spacing:0.06em;text-transform:uppercase;margin-bottom:5px;}
@@ -156,6 +170,26 @@ select option{background:var(--bg3);}
       <div class="form-row">
         <label>Ollama Timeout (seconds)</label>
         <input type="number" id="ollama_timeout" value="%d" min="30"/>
+      </div>
+      <div class="form-row">
+        <label>Analysis Mode</label>
+        <div class="toggle-group">
+          <label class="toggle-option">
+            <input type="radio" name="analysis_mode" value="fast" %s/>
+            <span>Fast</span>
+            <small>~30s · short snippets · no suggestions</small>
+          </label>
+          <label class="toggle-option">
+            <input type="radio" name="analysis_mode" value="standard" %s/>
+            <span>Standard</span>
+            <small>~90s · medium snippets · suggestions on</small>
+          </label>
+          <label class="toggle-option">
+            <input type="radio" name="analysis_mode" value="detailed" %s/>
+            <span>Detailed</span>
+            <small>~4min · full snippets · all skills</small>
+          </label>
+        </div>
       </div>
     </div>
 
@@ -304,6 +338,8 @@ async function startApp() {
   fd.append('ollama_base_url',   ollamaU);
   fd.append('ollama_model',      model);
   fd.append('ollama_timeout',    timeout);
+  const modeElS = document.querySelector('input[name="analysis_mode"]:checked');
+  fd.append('analysis_mode', modeElS ? modeElS.value : 'standard');
 
   try {
     log('startApp', 'POST /start');
@@ -398,6 +434,8 @@ async function restartApp() {
   fd.append('ollama_base_url',   ollamaU);
   fd.append('ollama_model',      model);
   fd.append('ollama_timeout',    timeout);
+  const modeElR = document.querySelector('input[name="analysis_mode"]:checked');
+  fd.append('analysis_mode', modeElR ? modeElR.value : 'standard');
 
   try {
     log('restartApp', 'POST /restart');
@@ -500,5 +538,8 @@ document.addEventListener('DOMContentLoaded', () => {
 		cfg.OllamaModel,
 		cfg.OllamaModel,
 		cfg.OllamaTimeoutSeconds,
+		checkedIf(cfg.AnalysisMode == "fast"),
+		checkedIf(cfg.AnalysisMode == "standard" || cfg.AnalysisMode == ""),
+		checkedIf(cfg.AnalysisMode == "detailed"),
 	)
 }

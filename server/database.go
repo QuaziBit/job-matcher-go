@@ -95,6 +95,8 @@ func runMigrations() {
 		"ALTER TABLE analyses ADD COLUMN retry_count INTEGER DEFAULT 0",
 		"ALTER TABLE analyses ADD COLUMN used_fallback INTEGER DEFAULT 0",
 		"ALTER TABLE analyses ADD COLUMN suggestions TEXT DEFAULT '[]'",
+		"ALTER TABLE analyses ADD COLUMN duration_seconds INTEGER DEFAULT 0",
+		"ALTER TABLE analyses ADD COLUMN analysis_mode TEXT DEFAULT 'standard'",
 	}
 	for _, m := range migrations {
 		_, _ = db.Exec(m)
@@ -336,7 +338,9 @@ func dbGetAnalysesByJobID(jobID int64) ([]Analysis, error) {
 		       COALESCE(a.validation_errors, ''),
 		       COALESCE(a.retry_count, 0),
 		       COALESCE(a.used_fallback, 0),
-		       COALESCE(a.suggestions, '[]')
+		       COALESCE(a.suggestions, '[]'),
+		       COALESCE(a.duration_seconds, 0),
+		       COALESCE(a.analysis_mode, 'standard')
 		FROM analyses a
 		JOIN resumes r ON r.id = a.resume_id
 		WHERE a.job_id = ?
@@ -359,6 +363,7 @@ func dbGetAnalysesByJobID(jobID int64) ([]Analysis, error) {
 			&matchedV2JSON, &missingV2JSON,
 			&a.ValidationErrors, &a.RetryCount, &usedFallbackInt,
 			&suggestionsJSON,
+			&a.DurationSeconds, &a.AnalysisMode,
 		); err != nil {
 			return nil, err
 		}
@@ -419,13 +424,15 @@ func dbInsertAnalysis(a Analysis) (int64, error) {
 		(job_id, resume_id, score, adjusted_score, penalty_breakdown,
 		 matched_skills, missing_skills, reasoning, llm_provider, llm_model,
 		 matched_skills_v2, missing_skills_v2,
-		 validation_errors, retry_count, used_fallback, suggestions)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 validation_errors, retry_count, used_fallback, suggestions,
+		 duration_seconds, analysis_mode)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.JobID, a.ResumeID, a.Score, a.AdjustedScore, string(pbJSON),
 		string(matchedV1JSON), string(missingV1JSON), a.Reasoning,
 		a.LLMProvider, a.LLMModel,
 		string(matchedV2JSON), string(missingV2JSON),
 		a.ValidationErrors, a.RetryCount, usedFallbackInt, string(suggestionsJSON),
+		a.DurationSeconds, a.AnalysisMode,
 	)
 	if err != nil {
 		return 0, err

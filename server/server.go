@@ -85,6 +85,17 @@ func templateFuncs() template.FuncMap {
 		"upper":              strings.ToUpper,
 		"groupMatchedSkills": groupMatchedSkills,
 		"buildClusterLines":  buildClusterLines,
+		"formatDuration": func(s int) string {
+			if s == 0 {
+				return ""
+			}
+			m := s / 60
+			sec := s % 60
+			if m > 0 {
+				return fmt.Sprintf("%d:%02d", m, sec)
+			}
+			return fmt.Sprintf("%ds", sec)
+		},
 		// "empty" checks if a string value is empty — use instead of "not" for strings
 		// since Go's built-in "not" only works on booleans
 		"empty": func(v interface{}) bool {

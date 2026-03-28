@@ -150,6 +150,14 @@ func (l *Launcher) parseConfig(r *http.Request) config.Config {
 			log.Printf("✗ Invalid timeout %q: %v", v, err)
 		}
 	}
+	if v := r.FormValue("analysis_mode"); v != "" {
+		switch v {
+		case "fast", "standard", "detailed":
+			cfg.AnalysisMode = v
+		default:
+			log.Printf("✗ Invalid analysis_mode %q", v)
+		}
+	}
 	return cfg
 }
 

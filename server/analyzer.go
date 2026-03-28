@@ -80,6 +80,286 @@ func buildUserPrompt(resume, jobDescription string) string {
 	return fmt.Sprintf("## RESUME\n%s\n\n---\n\n## JOB DESCRIPTION\n%s\n\n---\n\nEvaluate the match and return ONLY the JSON object described in your instructions.", resume, jobDescription)
 }
 
+// ── Analysis Mode configuration ──────────────────────────────────────────────
+
+// ModeConfig holds per-mode analysis settings.
+type ModeConfig struct {
+	SnippetLen  int
+	MaxMatched  int
+	MaxMissing  int
+	Suggestions bool
+	MaxTokens   int
+}
+
+var modeConfigs = map[string]ModeConfig{
+	"fast":     {SnippetLen: 40,  MaxMatched: 5,  MaxMissing: 4,  Suggestions: false, MaxTokens: 800},
+	"standard": {SnippetLen: 70,  MaxMatched: 8,  MaxMissing: 6,  Suggestions: true,  MaxTokens: 1800},
+	"detailed": {SnippetLen: 100, MaxMatched: 15, MaxMissing: 10, Suggestions: true,  MaxTokens: 4096},
+}
+
+// modeEstimatesSeconds is used by the frontend progress bar.
+var modeEstimatesSeconds = map[string]int{
+	"fast":     30,
+	"standard": 90,
+	"detailed": 240,
+}
+
+func getModeConfig(cfg config.Config) ModeConfig {
+	if m, ok := modeConfigs[cfg.AnalysisMode]; ok {
+		return m
+	}
+	return modeConfigs["standard"]
+}
+
+// buildSystemPrompt returns a mode-appropriate system prompt.
+func buildSystemPrompt(mcfg ModeConfig, mode string) string {
+	slen := mcfg.SnippetLen
+	mm := mcfg.MaxMatched
+	mms := mcfg.MaxMissing
+
+	severityDefs := `
+Severity definitions for missing_skills:
+  blocker = eliminates candidacy entirely (e.g. required clearance, mandatory cert, minimum years not met)
+  major   = significant gap that will hurt chances substantially
+  minor   = nice-to-have or learnable gap that is unlikely to disqualify
+
+Requirement type definitions for missing_skills:
+  hard      = job uses words like: required, must have, must hold, mandatory, eligibility-blocking
+  preferred = job uses words like: preferred, desired, strong plus, ideally
+  bonus     = job uses words like: nice to have, is a plus, familiarity with
+  If unclear, use "preferred" as the default.
+
+match_type definitions for matched_skills:
+  exact    = skill name appears verbatim in both JD and resume
+  partial  = related term found (e.g. "REST" matches "REST APIs")
+  inferred = implied by context, no direct phrase found`
+
+	scoringRubric := `
+Scoring rubric:
+  1 = Poor match — major gaps, different domain entirely
+  2 = Weak match — some overlap but significant missing requirements
+  3 = Moderate match — meets roughly half the requirements
+  4 = Strong match — meets most requirements with minor gaps
+  5 = Excellent match — highly aligned, apply immediately`
+
+	base := "You are an expert technical recruiter and career coach specializing in software engineering,\nDevSecOps, and cloud infrastructure roles. You evaluate how well a candidate's resume matches a job description.\n\nYou MUST respond with ONLY valid JSON — no prose, no markdown, no code fences."
+
+	if mode == "fast" {
+		return fmt.Sprintf(`%s
+
+Return at most %d matched skills and at most %d missing skills — only the most significant ones.
+Snippets must be verbatim phrases, max %d characters. Do NOT fabricate snippets.
+
+Exactly this JSON shape:
+{
+  "score": <integer 1-5>,
+  "matched_skills": [
+    {"skill": "name", "match_type": "exact|partial|inferred", "jd_snippet": "<%d chars>"},
+    ...
+  ],
+  "missing_skills": [
+    {"skill": "name", "severity": "blocker|major|minor", "requirement_type": "hard|preferred|bonus", "jd_snippet": "<%d chars>"},
+    ...
+  ],
+  "reasoning": "<1-2 sentence honest assessment>"
+}
+%s
+%s`, base, mm, mms, slen, slen, slen, severityDefs, scoringRubric)
+	}
+
+	suggBlock := ""
+	if mcfg.Suggestions {
+		suggBlock = fmt.Sprintf(`
+  "suggestions": [
+    {"title": "short label", "detail": "specific actionable text", "job_requirement": "verbatim JD phrase"},
+    ...
+  ]
+
+Suggestion rules — you MUST follow these exactly:
+  - Generate exactly 3 resume improvement suggestions
+  - ONLY suggest clarifying, repositioning, or expanding EXISTING resume content
+  - NEVER suggest adding skills the candidate does not already have
+  - Each suggestion must cite the specific job requirement it addresses`)
+	}
+
+	return fmt.Sprintf(`%s
+
+Return at most %d matched skills and at most %d missing skills.
+Snippets must be verbatim phrases copied from the provided text, max %d characters.
+Do NOT fabricate or paraphrase snippets. If no direct phrase exists, set match_type to "inferred" and omit resume_snippet.
+
+Exactly this JSON shape:
+{
+  "score": <integer 1-5>,
+  "matched_skills": [
+    {"skill": "name", "match_type": "exact|partial|inferred", "jd_snippet": "<%d chars>", "resume_snippet": "<%d chars>"},
+    ...
+  ],
+  "missing_skills": [
+    {"skill": "name", "severity": "blocker|major|minor", "requirement_type": "hard|preferred|bonus", "jd_snippet": "<%d chars>"},
+    ...
+  ],
+  "reasoning": "<2-4 sentence honest assessment>"%s
+}
+%s
+%s`, base, mm, mms, slen, slen, slen, slen, suggBlock, severityDefs, scoringRubric)
+}
+
+// ── JSON repair and sanitize ─────────────────────────────────────────────────
+
+// repairTruncatedJSON attempts to close a truncated JSON object by counting
+// unclosed braces and brackets and appending the necessary closing characters.
+func repairTruncatedJSON(raw string) string {
+	open := strings.Count(raw, "{") - strings.Count(raw, "}")
+	openArr := strings.Count(raw, "[") - strings.Count(raw, "]")
+	if open <= 0 && openArr <= 0 {
+		return raw // not truncated
+	}
+	// Strip trailing comma or partial token
+	stripped := strings.TrimRight(raw, " \t\r\n,:{[")
+	closing := strings.Repeat("]", openArr) + strings.Repeat("}", open)
+	log.Printf("→ repaired truncated JSON: appended %q", closing)
+	return stripped + closing
+}
+
+// sanitizeJSON escapes unescaped double quotes inside JSON string values.
+// Uses a state machine to distinguish structural quotes from inner content quotes.
+func sanitizeJSON(raw string) string {
+	// Normalize smart quotes
+	raw = strings.NewReplacer(
+		"\u201c", `"`, "\u201d", `"`,
+		"\u2018", "'", "\u2019", "'",
+	).Replace(raw)
+
+	var out strings.Builder
+	i := 0
+	n := len(raw)
+	for i < n {
+		c := raw[i]
+		if c != '"' {
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		// Opening quote of a token
+		out.WriteByte(c)
+		i++
+		// Read token contents
+		for i < n {
+			c = raw[i]
+			if c == '\\' {
+				out.WriteByte(c)
+				i++
+				if i < n {
+					out.WriteByte(raw[i])
+					i++
+				}
+				continue
+			}
+			if c == '"' {
+				out.WriteByte(c)
+				i++
+				break
+			}
+			out.WriteByte(c)
+			i++
+		}
+		// Check if followed by colon → this was a key, now parse value
+		j := i
+		for j < n && (raw[j] == ' ' || raw[j] == '\t' || raw[j] == '\r' || raw[j] == '\n') {
+			j++
+		}
+		if j < n && raw[j] == ':' {
+			// Write colon and whitespace
+			for i <= j {
+				out.WriteByte(raw[i])
+				i++
+			}
+			// Skip whitespace after colon
+			for i < n && (raw[i] == ' ' || raw[i] == '\t' || raw[i] == '\r' || raw[i] == '\n') {
+				out.WriteByte(raw[i])
+				i++
+			}
+			// Parse value with inner-quote fixing
+			if i < n && raw[i] == '"' {
+				out.WriteByte('"')
+				i++
+				for i < n {
+					c = raw[i]
+					if c == '\\' {
+						out.WriteByte(c)
+						i++
+						if i < n {
+							out.WriteByte(raw[i])
+							i++
+						}
+						continue
+					}
+					if c == '"' {
+						// Is this the real closing quote?
+						k := i + 1
+						for k < n && (raw[k] == ' ' || raw[k] == '\t' || raw[k] == '\r' || raw[k] == '\n') {
+							k++
+						}
+						var next byte
+						if k < n {
+							next = raw[k]
+						}
+						if next == ',' || next == '}' || next == ']' || next == 0 || next == '"' {
+							break // real closing quote
+						}
+						// Unescaped inner quote — escape it
+						out.WriteString(`\"`)
+						i++
+						continue
+					}
+					out.WriteByte(c)
+					i++
+				}
+				out.WriteByte('"')
+				i++ // skip real closing quote
+				continue
+			}
+		}
+	}
+	return out.String()
+}
+
+// ── Value normalization ───────────────────────────────────────────────────────
+
+func normalizeSeverity(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "blocker", "critical", "must", "required", "mandatory":
+		return "blocker"
+	case "major", "high", "significant", "important":
+		return "major"
+	default:
+		return "minor"
+	}
+}
+
+func normalizeRequirementType(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "hard", "required", "mandatory", "must":
+		return "hard"
+	case "bonus", "optional", "nice-to-have", "plus":
+		return "bonus"
+	default:
+		return "preferred"
+	}
+}
+
+func normalizeMatchType(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "exact", "direct", "verbatim", "full":
+		return "exact"
+	case "partial", "related", "similar", "close":
+		return "partial"
+	default:
+		return "inferred"
+	}
+}
+
 // ── LLM response parsing ──────────────────────────────────────────────────────
 
 type llmRawResponse struct {
@@ -90,7 +370,7 @@ type llmRawResponse struct {
 	Suggestions   []json.RawMessage  `json:"suggestions"`
 }
 
-func parseLLMResponse(raw, jobDescription string) (Analysis, error) {
+func parseLLMResponse(raw, jobDescription string, mcfg ModeConfig) (Analysis, error) {
 	// Strip markdown fences
 	raw = regexp.MustCompile("```(?:json)?").ReplaceAllString(raw, "")
 	raw = strings.TrimSpace(raw)
@@ -103,9 +383,30 @@ func parseLLMResponse(raw, jobDescription string) (Analysis, error) {
 	}
 	raw = raw[start : end+1]
 
+	// Four-pass parsing: as-is → repair → sanitize → repair+sanitize
 	var resp llmRawResponse
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-		return Analysis{}, fmt.Errorf("failed to parse LLM JSON: %w", err)
+	var parseErr error
+	for _, attempt := range []string{"raw", "repair", "sanitize", "repair+sanitize"} {
+		var candidate string
+		switch attempt {
+		case "raw":
+			candidate = raw
+		case "repair":
+			candidate = repairTruncatedJSON(raw)
+		case "sanitize":
+			candidate = sanitizeJSON(raw)
+		case "repair+sanitize":
+			candidate = sanitizeJSON(repairTruncatedJSON(raw))
+		}
+		if err := json.Unmarshal([]byte(candidate), &resp); err == nil {
+			parseErr = nil
+			break
+		} else {
+			parseErr = err
+		}
+	}
+	if parseErr != nil {
+		return Analysis{}, fmt.Errorf("failed to parse LLM JSON: %w", parseErr)
 	}
 
 	if resp.Score < 1 || resp.Score > 5 {
@@ -117,9 +418,7 @@ func parseLLMResponse(raw, jobDescription string) (Analysis, error) {
 	for _, r := range resp.MatchedSkills {
 		var v2 MatchedSkill
 		if err := json.Unmarshal(r, &v2); err == nil && v2.Skill != "" {
-			if v2.MatchType == "" {
-				v2.MatchType = "exact"
-			}
+			v2.MatchType = normalizeMatchType(v2.MatchType)
 			matched = append(matched, v2)
 		} else {
 			var flat string
@@ -134,9 +433,8 @@ func parseLLMResponse(raw, jobDescription string) (Analysis, error) {
 	for _, r := range resp.MissingSkills {
 		var structured MissingSkill
 		if err := json.Unmarshal(r, &structured); err == nil && structured.Skill != "" {
-			if structured.RequirementType == "" {
-				structured.RequirementType = "preferred"
-			}
+			structured.Severity = normalizeSeverity(structured.Severity)
+			structured.RequirementType = normalizeRequirementType(structured.RequirementType)
 			missing = append(missing, structured)
 		} else {
 			var flat string
@@ -156,6 +454,14 @@ func parseLLMResponse(raw, jobDescription string) (Analysis, error) {
 		missing[i].ClusterGroup = GetSkillCategory(missing[i].Skill)
 	}
 
+	// Apply mode-based skill count caps
+	if mcfg.MaxMatched > 0 && len(matched) > mcfg.MaxMatched {
+		matched = matched[:mcfg.MaxMatched]
+	}
+	if mcfg.MaxMissing > 0 && len(missing) > mcfg.MaxMissing {
+		missing = missing[:mcfg.MaxMissing]
+	}
+
 	// Keyword detector pass — upgrade severities
 	if jobDescription != "" {
 		missing = keywordBoost(missing, jobDescription)
@@ -163,30 +469,28 @@ func parseLLMResponse(raw, jobDescription string) (Analysis, error) {
 
 	adjusted, breakdown := computeAdjustedScore(resp.Score, missing)
 
-	// Parse suggestions — handle both object format and plain string format.
-	// Ollama models often return plain strings despite being asked for objects.
-	// We accept both and normalize to ResumeSuggestion.
+	// Parse suggestions — skipped in fast mode
 	var suggestions []ResumeSuggestion
-	for _, raw := range resp.Suggestions {
-		// Try object format first: {"title":..., "detail":..., "job_requirement":...}
-		var s ResumeSuggestion
-		if err := json.Unmarshal(raw, &s); err == nil && s.Detail != "" {
-			suggestions = append(suggestions, s)
-			continue
+	if mcfg.Suggestions {
+		for _, raw := range resp.Suggestions {
+			var s ResumeSuggestion
+			if err := json.Unmarshal(raw, &s); err == nil && s.Detail != "" {
+				suggestions = append(suggestions, s)
+				continue
+			}
+			var str string
+			if err := json.Unmarshal(raw, &str); err == nil && str != "" {
+				suggestions = append(suggestions, ResumeSuggestion{
+					Title:  "Suggestion",
+					Detail: str,
+				})
+				continue
+			}
+			log.Printf("→ skipping unparseable suggestion: %s", string(raw))
 		}
-		// Fall back to plain string format: "some suggestion text"
-		var str string
-		if err := json.Unmarshal(raw, &str); err == nil && str != "" {
-			suggestions = append(suggestions, ResumeSuggestion{
-				Title:  "Suggestion",
-				Detail: str,
-			})
-			continue
+		if len(suggestions) > 3 {
+			suggestions = suggestions[:3]
 		}
-		log.Printf("→ skipping unparseable suggestion: %s", string(raw))
-	}
-	if len(suggestions) > 3 {
-		suggestions = suggestions[:3]
 	}
 
 	return Analysis{
@@ -345,15 +649,16 @@ func computeAdjustedScore(rawScore int, missing []MissingSkill) (int, PenaltyBre
 
 // ── Anthropic ─────────────────────────────────────────────────────────────────
 
-func analyzeWithAnthropic(resume, jobDescription, apiKey string) (Analysis, error) {
+func analyzeWithAnthropic(resume, jobDescription string, cfg config.Config) (Analysis, error) {
 	log.Printf("→ Calling Anthropic API (model: %s)", anthropicModel)
-	if apiKey == "" {
+	if cfg.AnthropicAPIKey == "" {
 		return Analysis{}, fmt.Errorf("Anthropic API key is not set — add it in the launcher or config.json")
 	}
+	mcfg := getModeConfig(cfg)
 	payload := map[string]interface{}{
 		"model":      anthropicModel,
-		"max_tokens": 4096,
-		"system":     systemPrompt,
+		"max_tokens": mcfg.MaxTokens,
+		"system":     buildSystemPrompt(mcfg, cfg.AnalysisMode),
 		"messages": []map[string]string{
 			{"role": "user", "content": buildUserPrompt(resume, jobDescription)},
 		},
@@ -365,7 +670,7 @@ func analyzeWithAnthropic(resume, jobDescription, apiKey string) (Analysis, erro
 		return Analysis{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("x-api-key", cfg.AnthropicAPIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	client := &http.Client{Timeout: 60 * time.Second}
@@ -392,7 +697,7 @@ func analyzeWithAnthropic(resume, jobDescription, apiKey string) (Analysis, erro
 		return Analysis{}, fmt.Errorf("empty response from Anthropic")
 	}
 
-	analysis, err := parseLLMResponse(result.Content[0].Text, jobDescription)
+	analysis, err := parseLLMResponse(result.Content[0].Text, jobDescription, getModeConfig(cfg))
 	if err != nil {
 		log.Printf("✗ Anthropic response parse error: %v\nRaw: %s", err, result.Content[0].Text)
 		return Analysis{}, err
@@ -400,6 +705,7 @@ func analyzeWithAnthropic(resume, jobDescription, apiKey string) (Analysis, erro
 	log.Printf("✓ Anthropic response: score=%d adjusted=%d", analysis.Score, analysis.AdjustedScore)
 	analysis.LLMProvider = "anthropic"
 	analysis.LLMModel = anthropicModel
+	analysis.AnalysisMode = cfg.AnalysisMode
 	return analysis, nil
 }
 
@@ -407,14 +713,15 @@ func analyzeWithAnthropic(resume, jobDescription, apiKey string) (Analysis, erro
 
 func analyzeWithOllama(resume, jobDescription string, cfg config.Config) (Analysis, error) {
 	log.Printf("→ Calling Ollama API (model: %s url: %s)", cfg.OllamaModel, cfg.OllamaBaseURL)
+	mcfg := getModeConfig(cfg)
 	payload := map[string]interface{}{
 		"model": cfg.OllamaModel,
 		"messages": []map[string]string{
-			{"role": "system", "content": systemPrompt},
+			{"role": "system", "content": buildSystemPrompt(mcfg, cfg.AnalysisMode)},
 			{"role": "user", "content": buildUserPrompt(resume, jobDescription)},
 		},
 		"stream":  false,
-		"options": map[string]interface{}{"temperature": 0.2},
+		"options": map[string]interface{}{"temperature": 0.2, "num_predict": mcfg.MaxTokens},
 	}
 
 	body, _ := json.Marshal(payload)
@@ -448,7 +755,7 @@ func analyzeWithOllama(resume, jobDescription string, cfg config.Config) (Analys
 		return Analysis{}, fmt.Errorf("failed to decode Ollama response: %w", err)
 	}
 
-	analysis, err := parseLLMResponse(result.Message.Content, jobDescription)
+	analysis, err := parseLLMResponse(result.Message.Content, jobDescription, getModeConfig(cfg))
 	if err != nil {
 		log.Printf("✗ Ollama response parse error: %v\nRaw: %s", err, result.Message.Content)
 		return Analysis{}, err
@@ -456,6 +763,7 @@ func analyzeWithOllama(resume, jobDescription string, cfg config.Config) (Analys
 	log.Printf("✓ Ollama response: score=%d adjusted=%d", analysis.Score, analysis.AdjustedScore)
 	analysis.LLMProvider = "ollama"
 	analysis.LLMModel = cfg.OllamaModel
+	analysis.AnalysisMode = cfg.AnalysisMode
 	return analysis, nil
 }
 
@@ -487,12 +795,8 @@ func validateLLMOutput(result Analysis, jd, resume string) ValidationResult {
 		}
 	}
 
-	validSeverities := map[string]bool{"blocker": true, "major": true, "minor": true}
-	for _, m := range result.MissingSkills {
-		if !validSeverities[m.Severity] {
-			errs = append(errs, fmt.Sprintf("invalid severity %q for skill %q", m.Severity, m.Skill))
-		}
-	}
+	// Note: severity and requirement_type are normalized in parseLLMResponse
+	// before validation runs — non-standard values are already mapped.
 
 	if strings.TrimSpace(result.Reasoning) == "" {
 		errs = append(errs, "empty reasoning")
@@ -519,7 +823,7 @@ func callLLMOnce(resume, jd, provider string, cfg config.Config) (Analysis, erro
 	if provider == "ollama" {
 		return analyzeWithOllama(resume, jd, cfg)
 	}
-	return analyzeWithAnthropic(resume, jd, cfg.AnthropicAPIKey)
+	return analyzeWithAnthropic(resume, jd, cfg)
 }
 
 // AnalyzeMatch runs the analysis with up to maxRetries attempts, validating
