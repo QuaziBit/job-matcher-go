@@ -228,10 +228,8 @@
             <div class="pill-list">
               {{range .Skills}}
               <div class="skill-evidence">
-                <span class="pill pill-green skill-chip matched match-{{.MatchType}}">
-                  {{.Skill}}
-                  {{if .MatchType}}<span class="match-type-badge match-{{.MatchType}}">{{.MatchType}}</span>{{end}}
-                </span>
+                <span class="pill pill-green match-{{.MatchType}}">{{.Skill}}</span>
+                {{if .MatchType}}<span class="match-type-badge match-{{.MatchType}}">{{.MatchType}}</span>{{end}}
                 {{if .JDSnippet}}
                 <button class="snippet-toggle" onclick="toggleSnippets(this)">&#9658; evidence</button>
                 <div class="evidence-snippets">
