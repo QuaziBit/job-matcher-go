@@ -221,27 +221,22 @@
 
         {{if .MatchedSkills}}
         <div style="margin-top: 10px;">
-          <div class="text-xs text-dim" style="margin-bottom: 6px;">Matched skills</div>
-          {{range groupMatchedSkills .MatchedSkills}}
-          <div class="skill-category-group">
-            <span class="skill-category-label">{{upper .Category}}</span>
-            <div class="pill-list">
-              {{range .Skills}}
-              <div class="skill-evidence">
-                <span class="pill pill-green match-{{.MatchType}}">{{.Skill}}</span>
-                {{if .MatchType}}<span class="match-type-badge match-{{.MatchType}}">{{.MatchType}}</span>{{end}}
-                {{if .JDSnippet}}
-                <button class="snippet-toggle" onclick="toggleSnippets(this)">&#9658; evidence</button>
-                <div class="evidence-snippets">
-                  <div class="snippet jd-snippet"><span class="snippet-label">JD:</span> &#8220;{{.JDSnippet}}&#8221;</div>
-                  {{if .ResumeSnippet}}<div class="snippet resume-snippet"><span class="snippet-label">Resume:</span> &#8220;{{.ResumeSnippet}}&#8221;</div>{{end}}
-                </div>
-                {{end}}
+          <div class="text-xs text-dim" style="margin-bottom: 4px;">Matched skills</div>
+          <div class="pill-list">
+            {{range .MatchedSkills}}
+            <div class="skill-evidence">
+              <span class="pill pill-green match-{{.MatchType}}">{{.Skill}}</span>
+              {{if .MatchType}}<span class="match-type-badge match-{{.MatchType}}">{{.MatchType}}</span>{{end}}
+              {{if .JDSnippet}}
+              <button class="snippet-toggle" onclick="toggleSnippets(this)">&#9658; evidence</button>
+              <div class="evidence-snippets" style="display:none;">
+                <div class="snippet jd-snippet"><span class="snippet-label">JD:</span> &#8220;{{.JDSnippet}}&#8221;</div>
+                {{if .ResumeSnippet}}<div class="snippet resume-snippet"><span class="snippet-label">Resume:</span> &#8220;{{.ResumeSnippet}}&#8221;</div>{{end}}
               </div>
               {{end}}
             </div>
+            {{end}}
           </div>
-          {{end}}
         </div>
         {{end}}
 
@@ -251,14 +246,14 @@
           <div class="pill-list">
             {{range .MissingSkills}}
             <div class="skill-evidence">
-              <span class="skill-chip missing severity-{{.Severity}} {{if eq .Severity "blocker"}}pill-red{{else if eq .Severity "major"}}pill-orange{{else}}pill-dim{{end}}"
+              <span class="pill {{if eq .Severity "blocker"}}pill-red{{else if eq .Severity "major"}}pill-orange{{else}}pill-dim{{end}}"
                     title="{{.Severity}}{{if .RequirementType}} · {{.RequirementType}}{{end}}">
                 {{if .RequirementType}}<span class="req-type req-{{.RequirementType}}">{{upper .RequirementType}}</span>{{end}}
                 {{.Skill}}
               </span>
               {{if .JDSnippet}}
               <button class="snippet-toggle" onclick="toggleSnippets(this)">&#9658; evidence</button>
-              <div class="evidence-snippets">
+              <div class="evidence-snippets" style="display:none;">
                 <div class="snippet jd-snippet"><span class="snippet-label">JD:</span> &#8220;{{.JDSnippet}}&#8221;</div>
               </div>
               {{end}}

@@ -409,6 +409,7 @@ stored per analysis, and dynamic context window resolution for Ollama.
 
 - `llama3.1:8b` — works in all modes (fast / standard / detailed)
 - `phi3.5:3.8b` — works in all modes (fast / standard / detailed)
+- `llama3.2:3b` — works in all modes (fast / standard / detailed)
 - `gemma3:27b` — works in fast and standard modes; detailed mode may take
    15-20+ minutes on consumer hardware, increase `OLLAMA_TIMEOUT` to 2000s+
 - `nemotron-3-nano` — not compatible, ignores structured output format

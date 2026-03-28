@@ -909,6 +909,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function toggleSnippets(btn) {
   const container = btn.nextElementSibling;
+  if (!container) return;
   const isHidden = container.style.display === 'none' || !container.style.display;
   container.style.display = isHidden ? 'block' : 'none';
   btn.innerHTML = isHidden ? '&#9660; evidence' : '&#9658; evidence';
