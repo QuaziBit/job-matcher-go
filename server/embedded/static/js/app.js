@@ -918,6 +918,7 @@ function toggleDateMode() {
   const simpleEl = document.getElementById('filter-date');
   const fromEl   = document.getElementById('filter-date-from');
   const toEl     = document.getElementById('filter-date-to');
+  const sep      = document.getElementById('date-range-sep');
   const modeBtn  = document.getElementById('date-mode-btn');
 
   _dateMode = _dateMode === 'simple' ? 'advanced' : 'simple';
@@ -925,14 +926,16 @@ function toggleDateMode() {
 
   if (_dateMode === 'advanced') {
     if (simpleEl) { simpleEl.value = ''; simpleEl.style.display = 'none'; }
-    if (fromEl)   fromEl.style.display   = 'inline-block';
-    if (toEl)     toEl.style.display     = 'inline-block';
-    if (modeBtn)  modeBtn.textContent    = '✕ range';
+    if (fromEl)   fromEl.style.display = '';
+    if (sep)      sep.style.display    = '';
+    if (toEl)     toEl.style.display   = '';
+    if (modeBtn)  { modeBtn.title = 'Switch to simple mode'; modeBtn.textContent = '✕ range'; }
   } else {
-    if (fromEl)  { fromEl.value = '';   fromEl.style.display  = 'none'; }
-    if (toEl)    { toEl.value   = '';   toEl.style.display    = 'none'; }
-    if (simpleEl) simpleEl.style.display = '';
-    if (modeBtn)  modeBtn.textContent    = '⋯';
+    if (fromEl)  { fromEl.value = '';  fromEl.style.display  = 'none'; }
+    if (sep)       sep.style.display = 'none';
+    if (toEl)    { toEl.value = '';    toEl.style.display    = 'none'; }
+    if (simpleEl)  simpleEl.style.display = '';
+    if (modeBtn)  { modeBtn.title = 'Switch to date range mode'; modeBtn.textContent = '⋯'; }
     applyFilters();
   }
 }

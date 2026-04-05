@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/QuaziBit/job-matcher-go/config"
@@ -38,6 +39,12 @@ func parseTemplate(name string) (*template.Template, error) {
 
 // Start initializes DB, parses templates, registers routes, and begins serving.
 func (s *Server) Start() error {
+	// Propagate ShowMoreLogs to env so showMoreLogs() helper in llm.go can read it.
+	if s.cfg.ShowMoreLogs {
+		os.Setenv("SHOW_MORE_LOGS", "true")
+	} else {
+		os.Setenv("SHOW_MORE_LOGS", "false")
+	}
 	log.Printf("→ Initializing database: %s", s.cfg.DBPath)
 	if err := initDB(s.cfg.DBPath); err != nil {
 		return fmt.Errorf("database init failed: %w", err)

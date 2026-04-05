@@ -75,16 +75,19 @@
     <option value="ollama">Ollama</option>
     <option value="manual">Manual</option>
   </select>
-  <select id="filter-date">
-    <option value="">Any Time</option>
-    <option value="1">Today</option>
-    <option value="7">Last 7 days</option>
-    <option value="30">Last 30 days</option>
-    <option value="90">Last 90 days</option>
-  </select>
-  <button class="btn btn-ghost btn-sm" id="date-mode-btn" onclick="toggleDateMode()" title="Switch to date range">⋯</button>
-  <input type="date" id="filter-date-from" style="display:none;" title="From date" />
-  <input type="date" id="filter-date-to"   style="display:none;" title="To date" />
+  <div id="date-filter-wrap" style="display:flex; align-items:center; gap:6px;">
+    <select id="filter-date">
+      <option value="">Any Time</option>
+      <option value="1">Today</option>
+      <option value="7">Last 7 days</option>
+      <option value="30">Last 30 days</option>
+      <option value="90">Last 90 days</option>
+    </select>
+    <input type="date" id="filter-date-from" style="display:none;" title="From date" />
+    <span id="date-range-sep" style="display:none; color:var(--text-mute); font-size:11px;">→</span>
+    <input type="date" id="filter-date-to"   style="display:none;" title="To date" />
+    <button class="btn btn-ghost btn-sm" id="date-mode-btn" onclick="toggleDateMode()" title="Switch to date range mode" style="padding:4px 7px; font-size:11px;">⋯</button>
+  </div>
   <button class="btn btn-ghost btn-sm" onclick="clearFilters()" id="clear-btn" style="display:none;">
     ✕ Clear
   </button>

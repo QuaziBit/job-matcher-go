@@ -110,12 +110,16 @@
       <button id="analyze-btn" class="btn btn-primary"
               onclick="analyzeJob({{.Job.ID}})"
               {{if empty .Resumes}}disabled{{end}}>Run Analysis</button>
-      <div style="margin-top: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-        <button id="salary-btn" class="btn btn-ghost" onclick="estimateSalary({{.Job.ID}})">
-          💰 {{if .HasSalaryInJD}}Extract Salary{{else}}Estimate Salary{{end}}
+      <div style="margin-top: 10px; display: flex; align-items: center; gap: 10px;">
+        {{if not .SalaryEstimate}}
+        <button id="salary-btn" class="btn btn-ghost btn-sm" onclick="estimateSalary({{.Job.ID}})">
+          💰 {{if .HasSalaryInJD}}Extract{{else}}Estimate{{end}} Salary
         </button>
-        {{if .SalaryEstimate}}
-        <span class="text-dim" style="font-size: 0.8rem;">Salary cached — <button class="btn-inline-mute" onclick="rerunSalaryEstimate({{.Job.ID}})">re-run</button></span>
+        {{else}}
+        <span class="text-xs text-dim" style="font-family: var(--font-mono);">
+          Salary {{if .SalaryEstimate.Source}}{{.SalaryEstimate.Source}}{{else}}estimate{{end}} cached —
+          <button class="btn-inline-mute" onclick="rerunSalaryEstimate({{.Job.ID}})">re-run</button>
+        </span>
         {{end}}
       </div>
 

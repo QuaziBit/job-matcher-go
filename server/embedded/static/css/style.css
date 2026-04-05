@@ -616,6 +616,21 @@ label {
   opacity: 0.7;
 }
 
+/* ── Date picker inputs ─────────────────────────────────────────────────── */
+.filter-bar input[type="date"] {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  outline: none;
+  cursor: pointer;
+  color-scheme: dark;
+}
+.filter-bar input[type="date"]:focus { border-color: var(--amber); }
+
 /* ── Pagination bar ──────────────────────────────────────────────────────── */
 .pagination-bar {
   display: flex;
@@ -1096,10 +1111,35 @@ label {
 
 /* ── Salary badge ──────────────────────────────────────────────────────────── */
 .salary-badge-wrap { display: flex; align-items: center; gap: 8px; }
-.salary-badge { display: inline-flex; flex-direction: column; gap: 2px; font-family: var(--font-mono); font-size: 0.82rem; padding: 4px 10px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg2); }
-.salary-high   { background: rgba(34, 197, 94, 0.12); border-color: rgba(34, 197, 94, 0.4); }
-.salary-medium { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.4); }
-.salary-low    { background: var(--bg3); border-color: var(--border); }
-.salary-confidence { font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.7; color: var(--text-dim); }
+.salary-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+.salary-high   { background: rgba(34,197,94,.12);  color: var(--green); border: 1px solid rgba(34,197,94,.3); }
+.salary-medium { background: rgba(245,158,11,.12); color: var(--amber); border: 1px solid rgba(245,158,11,.3); }
+.salary-low    { background: var(--bg3);            color: var(--text-dim); border: 1px solid var(--border); }
+.salary-confidence {
+  font-size: 10px;
+  opacity: 0.7;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.btn-inline-mute {
+  background: none;
+  border: none;
+  color: var(--text-mute);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  font-family: var(--font-mono);
+}
+.btn-inline-mute:hover { color: var(--amber); }
 .btn-inline-mute { background: none; border: none; cursor: pointer; color: var(--text-mute); font-size: 0.85rem; padding: 2px 4px; border-radius: 3px; }
 .btn-inline-mute:hover { color: var(--amber); }
