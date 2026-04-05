@@ -124,5 +124,32 @@ func templateFuncs() template.FuncMap {
 			return s[i:j]
 		},
 		"seq": func(vals ...string) []string { return vals },
+		"formatSalaryRange": func(minVal, maxVal int, currency, period string) string {
+			cur := "$"
+			if currency != "" && currency != "USD" {
+				cur = currency + " "
+			}
+			per := "yr"
+			if period == "hour" {
+				per = "hr"
+			}
+			return fmt.Sprintf("%s%s – %s%s / %s", cur, formatWithCommas(minVal), cur, formatWithCommas(maxVal), per)
+		},
 	}
+}
+
+// formatWithCommas formats an integer with thousands separators: 140000 → "140,000".
+func formatWithCommas(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var out []byte
+	for i, c := range []byte(s) {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, c)
+	}
+	return string(out)
 }

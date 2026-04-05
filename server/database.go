@@ -97,6 +97,7 @@ func runMigrations() {
 		"ALTER TABLE analyses ADD COLUMN suggestions TEXT DEFAULT '[]'",
 		"ALTER TABLE analyses ADD COLUMN duration_seconds INTEGER DEFAULT 0",
 		"ALTER TABLE analyses ADD COLUMN analysis_mode TEXT DEFAULT 'standard'",
+		"ALTER TABLE jobs ADD COLUMN salary_estimate TEXT DEFAULT ''",
 	}
 	for _, m := range migrations {
 		_, _ = db.Exec(m)
@@ -160,9 +161,13 @@ func dbGetJobListItems(f JobFilters) ([]JobListItem, int, error) {
 	args  := []interface{}{}
 
 	if f.Search != "" {
-		where = append(where, "(LOWER(j.title) LIKE ? OR LOWER(j.company) LIKE ?)")
+		where = append(where, `(LOWER(j.title) LIKE ?
+			OR LOWER(j.company) LIKE ?
+			OR LOWER(COALESCE(a.recruiter_name,''))  LIKE ?
+			OR LOWER(COALESCE(a.recruiter_email,'')) LIKE ?
+			OR LOWER(COALESCE(a.recruiter_phone,'')) LIKE ?)`)
 		like := "%" + strings.ToLower(f.Search) + "%"
-		args  = append(args, like, like)
+		args  = append(args, like, like, like, like, like)
 	}
 	if f.Status != "" {
 		where = append(where, "COALESCE(a.status, 'not_applied') = ?")
@@ -202,6 +207,18 @@ func dbGetJobListItems(f JobFilters) ([]JobListItem, int, error) {
 		}
 	}
 
+	if f.AddedDays > 0 {
+		where = append(where, fmt.Sprintf("j.scraped_at >= datetime('now', '-%d days')", f.AddedDays))
+	}
+	if f.DateFrom != "" {
+		where = append(where, "date(j.scraped_at) >= ?")
+		args  = append(args, f.DateFrom)
+	}
+	if f.DateTo != "" {
+		where = append(where, "date(j.scraped_at) <= ?")
+		args  = append(args, f.DateTo)
+	}
+
 	whereSQL := ""
 	if len(where) > 0 {
 		whereSQL = "WHERE " + strings.Join(where, " AND ")
@@ -212,7 +229,12 @@ func dbGetJobListItems(f JobFilters) ([]JobListItem, int, error) {
 		       COALESCE(a.status, 'not_applied'),
 		       (SELECT score          FROM analyses WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1),
 		       (SELECT adjusted_score FROM analyses WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1),
-		       (SELECT llm_provider   FROM analyses WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1)
+		       (SELECT llm_provider   FROM analyses WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1),
+		       (SELECT llm_model      FROM analyses WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1),
+		       CASE WHEN (a.recruiter_name  IS NOT NULL AND a.recruiter_name  != '')
+		              OR (a.recruiter_email IS NOT NULL AND a.recruiter_email != '')
+		              OR (a.recruiter_phone IS NOT NULL AND a.recruiter_phone != '')
+		            THEN 1 ELSE 0 END
 		FROM jobs j
 		LEFT JOIN applications a ON a.job_id = j.id
 		` + whereSQL + `
@@ -252,10 +274,11 @@ func dbGetJobListItems(f JobFilters) ([]JobListItem, int, error) {
 		var item JobListItem
 		var ts string
 		var score, adjScore sql.NullInt64
-		var provider sql.NullString
+		var provider, lastModel sql.NullString
+		var hasRecruiter int
 		if err := rows.Scan(
 			&item.ID, &item.URL, &item.Title, &item.Company, &item.Location, &ts,
-			&item.Status, &score, &adjScore, &provider,
+			&item.Status, &score, &adjScore, &provider, &lastModel, &hasRecruiter,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -271,7 +294,11 @@ func dbGetJobListItems(f JobFilters) ([]JobListItem, int, error) {
 		if provider.Valid {
 			item.Provider = provider.String
 		}
+		if lastModel.Valid {
+			item.LastModel = lastModel.String
+		}
 		item.IsManual = strings.HasPrefix(item.URL, "manual://")
+		item.HasRecruiter = hasRecruiter == 1
 		items = append(items, item)
 	}
 	return items, total, nil
@@ -322,6 +349,20 @@ func dbInsertJob(jobURL, title, company, location, description string) (int64, e
 
 func dbDeleteJob(id int64) error {
 	_, err := db.Exec(`DELETE FROM jobs WHERE id = ?`, id)
+	return err
+}
+
+func dbGetJobSalaryEstimate(id int64) (string, error) {
+	var raw string
+	err := db.QueryRow(`SELECT COALESCE(salary_estimate, '') FROM jobs WHERE id = ?`, id).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return raw, err
+}
+
+func dbSetJobSalaryEstimate(id int64, data string) error {
+	_, err := db.Exec(`UPDATE jobs SET salary_estimate = ? WHERE id = ?`, data, id)
 	return err
 }
 

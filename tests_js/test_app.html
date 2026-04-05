@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>app.js Test Suite</title>
+  <style>
+    body { font-family: monospace; padding: 1rem 2rem; background: #111; color: #ccc; }
+    h1   { color: #fff; margin-bottom: 0.25rem; }
+    p.subtitle { color: #888; margin: 0 0 1.5rem; font-size: 0.9rem; }
+    .summary { font-size: 1.1rem; font-weight: bold; margin-bottom: 1rem; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; }
+    .section { margin-top: 1.25rem; color: #a78bfa; font-weight: bold; }
+    .result { padding: 0.1rem 0; }
+    #results { max-width: 860px; }
+  </style>
+</head>
+<body>
+
+<h1>app.js Test Suite</h1>
+<p class="subtitle">Open directly in a browser — no server required.</p>
+<div class="summary" id="summary">Running…</div>
+<div id="results"></div>
+
+<!-- ── DOM stubs ─────────────────────────────────────────────────────────── -->
+<!-- Hidden stubs so app.js initialises without errors on DOMContentLoaded.  -->
+<!-- Select stubs need real <option> values for .value assignment to work.   -->
+<div style="display:none" id="stubs">
+  <div id="toast"></div>
+  <div id="jobs-list"></div>
+  <div id="no-results" class="hidden"></div>
+  <div id="empty-state" class="hidden"></div>
+  <div id="pagination-bar" style="display:none"></div>
+  <div id="pagination-info"></div>
+  <div id="page-indicator"></div>
+  <button id="prev-btn"></button>
+  <button id="next-btn"></button>
+  <div id="jobs-loading" style="display:none"></div>
+  <div id="jobs-error" class="hidden"><span id="jobs-error-text"></span></div>
+  <input  id="filter-search"   value="">
+  <select id="filter-status">
+    <option value=""></option>
+    <option value="applied">applied</option>
+    <option value="interviewing">interviewing</option>
+  </select>
+  <select id="filter-score">
+    <option value=""></option>
+    <option value="3">3</option>
+    <option value="4">4</option>
+  </select>
+  <select id="filter-provider">
+    <option value=""></option>
+    <option value="anthropic">anthropic</option>
+    <option value="ollama">ollama</option>
+  </select>
+  <select id="filter-date">
+    <option value=""></option>
+    <option value="7">7</option>
+    <option value="30">30</option>
+  </select>
+  <input  id="filter-date-from" value="">
+  <input  id="filter-date-to"   value="">
+  <select id="per-page">
+    <option value="25">25</option>
+    <option value="50">50</option>
+  </select>
+  <div id="clear-btn" style="display:none"></div>
+  <div id="search-clear-btn" style="display:none"></div>
+</div>
+
+<script src="../server/embedded/static/js/app.js"></script>
+<script>
+// ── Test runner ───────────────────────────────────────────────────────────────
+
+let _passed = 0;
+let _failed = 0;
+let _section = '';
+
+const out = document.getElementById('results');
+
+function section(name) {
+  _section = name;
+  const h = document.createElement('div');
+  h.className = 'section';
+  h.textContent = `── ${name}`;
+  out.appendChild(h);
+}
+
+function test(name, fn) {
+  try {
+    fn();
+    _passed++;
+    const el = document.createElement('div');
+    el.className = 'result pass';
+    el.textContent = `✓ ${name}`;
+    out.appendChild(el);
+    console.log(`✓ ${_section} › ${name}`);
+  } catch(e) {
+    _failed++;
+    const el = document.createElement('div');
+    el.className = 'result fail';
+    el.textContent = `✗ ${name}: ${e.message}`;
+    out.appendChild(el);
+    console.error(`✗ ${_section} › ${name}:`, e.message);
+  }
+}
+
+function assert(condition, msg) {
+  if (!condition) throw new Error(msg || 'assertion failed');
+}
+
+function assertEqual(a, b) {
+  if (a !== b) throw new Error(`expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
+}
+
+function assertContains(str, sub) {
+  if (!str.includes(sub)) throw new Error(`expected ${JSON.stringify(str)} to contain ${JSON.stringify(sub)}`);
+}
+
+function assertClass(el, cls) {
+  if (!el.classList.contains(cls)) throw new Error(`expected element to have class "${cls}"`);
+}
+
+function assertNotClass(el, cls) {
+  if (el.classList.contains(cls)) throw new Error(`expected element NOT to have class "${cls}"`);
+}
+
+// ── Helper: reset filter inputs ───────────────────────────────────────────────
+function resetFilters() {
+  ['filter-search','filter-status','filter-score','filter-provider',
+   'filter-date','filter-date-from','filter-date-to'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+}
+
+// ── Helper: make a minimal job object ────────────────────────────────────────
+function makeJob(overrides) {
+  return Object.assign({
+    id: 1, title: 'Test Job', company: 'Acme', location: 'Remote',
+    url: 'https://example.com/job/1', status: 'not_applied',
+    adjusted_score: 4, best_score: 4, provider: 'anthropic',
+    last_model: 'claude-opus-4-5', scraped_at: null,
+    has_recruiter: false,
+  }, overrides);
+}
+
+// ── Helper: make pagination data ──────────────────────────────────────────────
+function makePagData(overrides) {
+  return Object.assign({
+    total: 10, jobs: [], page: 1, total_pages: 3, per_page: 5,
+  }, overrides);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── log / logErr (2) ──────────────────────────────────────────────────────────
+section('log / logErr');
+
+test('log() does not throw', () => {
+  log('test', 'hello', 1, 2, 3);
+});
+
+test('logErr() does not throw', () => {
+  logErr('test', 'something went wrong', new Error('oops'));
+});
+
+// ── formatElapsed (10) ───────────────────────────────────────────────────────
+section('formatElapsed');
+
+test('0 seconds → "0s"',   () => assertEqual(formatElapsed(0),    '0s'));
+test('1 second  → "1s"',   () => assertEqual(formatElapsed(1),    '1s'));
+test('45 seconds → "45s"', () => assertEqual(formatElapsed(45),   '45s'));
+test('59 seconds → "59s"', () => assertEqual(formatElapsed(59),   '59s'));
+test('60 seconds → "1:00"',() => assertEqual(formatElapsed(60),   '1:00'));
+test('61 seconds → "1:01"',() => assertEqual(formatElapsed(61),   '1:01'));
+test('90 seconds → "1:30"',() => assertEqual(formatElapsed(90),   '1:30'));
+test('120 seconds → "2:00"',() => assertEqual(formatElapsed(120), '2:00'));
+test('125 seconds → "2:05" (zero-padded)',() => assertEqual(formatElapsed(125), '2:05'));
+test('3661 seconds → "61:01"',() => assertEqual(formatElapsed(3661), '61:01'));
+
+// ── toast (5) ────────────────────────────────────────────────────────────────
+section('toast');
+
+test('sets message text', () => {
+  toast('Hello world', 'info');
+  const el = document.getElementById('toast');
+  assertEqual(el.textContent, 'Hello world');
+});
+
+test('type="info" adds info class', () => {
+  toast('msg', 'info');
+  assertContains(document.getElementById('toast').className, 'info');
+});
+
+test('type="success" adds success class', () => {
+  toast('msg', 'success');
+  assertContains(document.getElementById('toast').className, 'success');
+});
+
+test('type="error" adds error class', () => {
+  toast('msg', 'error');
+  assertContains(document.getElementById('toast').className, 'error');
+});
+
+test('default type is "info"', () => {
+  toast('msg');
+  assertContains(document.getElementById('toast').className, 'info');
+});
+
+// ── renderMeter (5) ──────────────────────────────────────────────────────────
+section('renderMeter');
+
+test('creates exactly 5 pips', () => {
+  const c = document.createElement('div');
+  renderMeter(3, c);
+  assertEqual(c.querySelectorAll('.score-pip').length, 5);
+});
+
+test('score=3 fills 3 pips', () => {
+  const c = document.createElement('div');
+  renderMeter(3, c);
+  assertEqual(c.querySelectorAll('.filled-3').length, 3);
+});
+
+test('score=5 fills 5 pips', () => {
+  const c = document.createElement('div');
+  renderMeter(5, c);
+  assertEqual(c.querySelectorAll('.filled-5').length, 5);
+});
+
+test('score=1 fills 1 pip', () => {
+  const c = document.createElement('div');
+  renderMeter(1, c);
+  assertEqual(c.querySelectorAll('.filled-1').length, 1);
+});
+
+test('clears previous content on re-render', () => {
+  const c = document.createElement('div');
+  renderMeter(2, c);
+  renderMeter(4, c);
+  assertEqual(c.querySelectorAll('.score-pip').length, 5);
+  assertEqual(c.querySelectorAll('.filled-4').length, 4);
+});
+
+// ── hasActiveFilter (5) ──────────────────────────────────────────────────────
+section('hasActiveFilter');
+
+test('all empty → false', () => {
+  resetFilters();
+  assertEqual(hasActiveFilter(), false);
+});
+
+test('search value → true', () => {
+  resetFilters();
+  document.getElementById('filter-search').value = 'react';
+  assertEqual(hasActiveFilter(), true);
+  resetFilters();
+});
+
+test('status value → true', () => {
+  resetFilters();
+  document.getElementById('filter-status').value = 'applied';
+  assertEqual(hasActiveFilter(), true);
+  resetFilters();
+});
+
+test('score value → true', () => {
+  resetFilters();
+  document.getElementById('filter-score').value = '3';
+  assertEqual(hasActiveFilter(), true);
+  resetFilters();
+});
+
+test('provider value → true', () => {
+  resetFilters();
+  document.getElementById('filter-provider').value = 'anthropic';
+  assertEqual(hasActiveFilter(), true);
+  resetFilters();
+});
+
+// ── toggleSnippets (4) ───────────────────────────────────────────────────────
+section('toggleSnippets');
+
+(function() {
+  const btn = document.createElement('button');
+  btn.innerHTML = '&#9658; evidence';
+  const container = document.createElement('div');
+  container.style.display = 'none';
+  document.body.appendChild(btn);
+  document.body.appendChild(container);
+
+  test('hidden container → toggle shows it', () => {
+    toggleSnippets(btn);
+    assertEqual(container.style.display, 'block');
+  });
+
+  test('show → button text changes to ▼ evidence', () => {
+    assertContains(btn.innerHTML, '▼');
+  });
+
+  test('visible container → toggle hides it', () => {
+    toggleSnippets(btn);
+    assertEqual(container.style.display, 'none');
+  });
+
+  test('hide → button text changes to ► evidence', () => {
+    assertContains(btn.innerHTML, '►');
+  });
+
+  document.body.removeChild(btn);
+  document.body.removeChild(container);
+})();
+
+// ── renderJobs (7) ───────────────────────────────────────────────────────────
+section('renderJobs');
+
+// renderJobs calls renderPagination which reads _currentPage/_perPage globals.
+// It also calls saveFilterState on link clicks — those are just event listeners.
+
+test('normal job renders a link element', () => {
+  const data = { total: 1, jobs: [makeJob()], page: 1, total_pages: 1, per_page: 25 };
+  renderJobs(data);
+  const list = document.getElementById('jobs-list');
+  assert(list.querySelector('a.job-item') !== null, 'no .job-item link rendered');
+});
+
+test('job link href is /job/{id}', () => {
+  const data = { total: 1, jobs: [makeJob({ id: 42 })], page: 1, total_pages: 1, per_page: 25 };
+  renderJobs(data);
+  const link = document.getElementById('jobs-list').querySelector('a.job-item');
+  assertEqual(link.getAttribute('href'), '/job/42');
+});
+
+test('total=0 and no filter → shows empty-state', () => {
+  resetFilters();
+  renderJobs({ total: 0, jobs: [], page: 1, total_pages: 1, per_page: 25 });
+  assertNotClass(document.getElementById('empty-state'), 'hidden');
+});
+
+test('jobs array empty with active filter → shows no-results', () => {
+  resetFilters();
+  document.getElementById('filter-search').value = 'xyz';
+  renderJobs({ total: 3, jobs: [], page: 1, total_pages: 1, per_page: 25 });
+  assertNotClass(document.getElementById('no-results'), 'hidden');
+  resetFilters();
+});
+
+test('score badge rendered with correct score class', () => {
+  renderJobs({ total: 1, jobs: [makeJob({ adjusted_score: 4 })], page: 1, total_pages: 1, per_page: 25 });
+  const list = document.getElementById('jobs-list');
+  assert(list.querySelector('.score-4') !== null, 'no .score-4 badge');
+});
+
+test('manual:// URL shows MANUAL tag', () => {
+  renderJobs({ total: 1, jobs: [makeJob({ url: 'manual://abc123', provider: null, last_model: null })], page: 1, total_pages: 1, per_page: 25 });
+  const list = document.getElementById('jobs-list');
+  assertContains(list.innerHTML, 'MANUAL');
+});
+
+test('malformed job (null) is skipped, does not throw', () => {
+  renderJobs({ total: 2, jobs: [null, makeJob({ id: 7 })], page: 1, total_pages: 1, per_page: 25 });
+  const list = document.getElementById('jobs-list');
+  const links = list.querySelectorAll('a.job-item');
+  assertEqual(links.length, 1);
+  assertEqual(links[0].getAttribute('href'), '/job/7');
+});
+
+// ── renderPagination (7) ─────────────────────────────────────────────────────
+section('renderPagination');
+
+test('pagBar visible when total > 0', () => {
+  renderPagination(makePagData({ total: 10, page: 1, total_pages: 3, per_page: 5 }));
+  assertEqual(document.getElementById('pagination-bar').style.display, 'flex');
+});
+
+test('prev-btn disabled on page 1', () => {
+  renderPagination(makePagData({ page: 1 }));
+  assert(document.getElementById('prev-btn').disabled, 'prev-btn should be disabled');
+});
+
+test('next-btn disabled on last page', () => {
+  renderPagination(makePagData({ page: 3, total_pages: 3 }));
+  assert(document.getElementById('next-btn').disabled, 'next-btn should be disabled');
+});
+
+test('prev-btn enabled on page 2', () => {
+  renderPagination(makePagData({ page: 2, total_pages: 3 }));
+  assert(!document.getElementById('prev-btn').disabled, 'prev-btn should be enabled');
+});
+
+test('next-btn enabled before last page', () => {
+  renderPagination(makePagData({ page: 1, total_pages: 3 }));
+  assert(!document.getElementById('next-btn').disabled, 'next-btn should be enabled');
+});
+
+test('info text shows correct range', () => {
+  renderPagination(makePagData({ total: 10, page: 2, total_pages: 2, per_page: 5 }));
+  const info = document.getElementById('pagination-info').textContent;
+  assertContains(info, '6');  // start of page 2
+  assertContains(info, '10'); // end
+});
+
+test('page indicator text on multi-page', () => {
+  renderPagination(makePagData({ page: 2, total_pages: 3 }));
+  const indicator = document.getElementById('page-indicator').textContent;
+  assertContains(indicator, 'Page 2');
+  assertContains(indicator, '3');
+});
+
+// ── saveFilterState (1) ──────────────────────────────────────────────────────
+section('saveFilterState');
+
+test('full sessionStorage roundtrip', () => {
+  resetFilters();
+  document.getElementById('filter-search').value   = 'engineer';
+  document.getElementById('filter-status').value   = 'applied';
+  document.getElementById('filter-score').value    = '4';
+  document.getElementById('filter-provider').value = 'anthropic';
+  saveFilterState();
+  const saved = JSON.parse(sessionStorage.getItem('jobFilterState'));
+  assertEqual(saved.search,   'engineer');
+  assertEqual(saved.status,   'applied');
+  assertEqual(saved.score,    '4');
+  assertEqual(saved.provider, 'anthropic');
+  resetFilters();
+});
+
+// ── clearFilters (1) ─────────────────────────────────────────────────────────
+section('clearFilters');
+
+test('clears all filter inputs', () => {
+  document.getElementById('filter-search').value   = 'go dev';
+  document.getElementById('filter-status').value   = 'applied';
+  document.getElementById('filter-score').value    = '3';
+  document.getElementById('filter-provider').value = 'ollama';
+  // clearFilters calls applyFilters → fetchJobs — suppress the network call
+  // by temporarily overriding fetchJobs
+  const origFetch = window.fetchJobs;
+  window.fetchJobs = () => {};
+  clearFilters();
+  window.fetchJobs = origFetch;
+  assertEqual(document.getElementById('filter-search').value,   '');
+  assertEqual(document.getElementById('filter-status').value,   '');
+  assertEqual(document.getElementById('filter-score').value,    '');
+  assertEqual(document.getElementById('filter-provider').value, '');
+});
+
+// ── showLoading (4) ──────────────────────────────────────────────────────────
+section('showLoading');
+
+test('show=true makes loading visible', () => {
+  showLoading(true);
+  assertEqual(document.getElementById('jobs-loading').style.display, 'block');
+});
+
+test('show=true hides error box', () => {
+  document.getElementById('jobs-error').classList.remove('hidden');
+  showLoading(true);
+  assertClass(document.getElementById('jobs-error'), 'hidden');
+});
+
+test('show=true clears jobs list', () => {
+  document.getElementById('jobs-list').innerHTML = '<a class="job-item">x</a>';
+  showLoading(true);
+  assertEqual(document.getElementById('jobs-list').innerHTML, '');
+});
+
+test('show=false hides loading', () => {
+  showLoading(true);
+  showLoading(false);
+  assert(
+    document.getElementById('jobs-loading').style.display === 'none' ||
+    document.getElementById('jobs-loading').style.display === '',
+    'loading should be hidden'
+  );
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Summary
+// ═════════════════════════════════════════════════════════════════════════════
+
+const total = _passed + _failed;
+const summary = document.getElementById('summary');
+summary.textContent = `${_passed}/${total} passed`;
+summary.className   = 'summary ' + (_failed === 0 ? 'pass' : 'fail');
+console.log(`\n${_passed}/${total} tests passed`);
+</script>
+</body>
+</html>

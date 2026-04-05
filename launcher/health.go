@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 // Status levels
@@ -29,8 +32,11 @@ type HealthReport struct {
 	Models    []string       `json:"models"` // available Ollama models
 }
 
-// CheckSQLite verifies the DB file is accessible.
-// If it doesn't exist yet, that's OK — init will create it on first start.
+// requiredTables lists the four core tables the app needs.
+var requiredTables = []string{"jobs", "resumes", "analyses", "applications"}
+
+// CheckSQLite verifies the DB file is accessible and the 4 core tables exist.
+// If the file doesn't exist yet, that's OK — InitDB will create it on first start.
 func CheckSQLite(dbPath string) HealthResult {
 	info, err := os.Stat(dbPath)
 	if os.IsNotExist(err) {
@@ -46,9 +52,36 @@ func CheckSQLite(dbPath string) HealthResult {
 		}
 	}
 	sizeKB := info.Size() / 1024
+
+	// Verify the 4 required tables exist.
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return HealthResult{
+			Status:  StatusWarn,
+			Message: fmt.Sprintf("%s (%d KB) — could not open to verify tables: %v", dbPath, sizeKB, err),
+		}
+	}
+	defer db.Close()
+
+	var missing []string
+	for _, tbl := range requiredTables {
+		var name string
+		err := db.QueryRow(
+			`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, tbl,
+		).Scan(&name)
+		if err != nil {
+			missing = append(missing, tbl)
+		}
+	}
+	if len(missing) > 0 {
+		return HealthResult{
+			Status:  StatusWarn,
+			Message: fmt.Sprintf("%s (%d KB) — missing tables: %s", dbPath, sizeKB, strings.Join(missing, ", ")),
+		}
+	}
 	return HealthResult{
 		Status:  StatusOK,
-		Message: fmt.Sprintf("%s (%d KB)", dbPath, sizeKB),
+		Message: fmt.Sprintf("%s (%d KB, %d tables verified)", dbPath, sizeKB, len(requiredTables)),
 	}
 }
 

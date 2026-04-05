@@ -1,25 +1,9 @@
 package server
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 )
-
-func setupTestDB(t *testing.T) func() {
-	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	if err := initDB(dbPath); err != nil {
-		t.Fatalf("initDB failed: %v", err)
-	}
-	return func() {
-		if db != nil {
-			db.Close()
-		}
-		os.Remove(dbPath)
-	}
-}
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 

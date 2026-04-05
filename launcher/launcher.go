@@ -137,6 +137,9 @@ func (l *Launcher) parseConfig(r *http.Request) config.Config {
 	if v := r.FormValue("anthropic_api_key"); v != "" {
 		cfg.AnthropicAPIKey = v
 	}
+	if v := r.FormValue("anthropic_model"); v != "" {
+		cfg.AnthropicModel = v
+	}
 	if v := r.FormValue("ollama_base_url"); v != "" {
 		cfg.OllamaBaseURL = v
 	}
@@ -158,6 +161,8 @@ func (l *Launcher) parseConfig(r *http.Request) config.Config {
 			log.Printf("✗ Invalid analysis_mode %q", v)
 		}
 	}
+	// Checkbox: absent from POST means unchecked (false).
+	cfg.ShowMoreLogs = r.FormValue("show_more_logs") != ""
 	return cfg
 }
 
@@ -260,8 +265,9 @@ func (l *Launcher) handleRestart(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"ok":  true,
-		"url": fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port),
+		"ok":            true,
+		"url":           fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port),
+		"analysis_mode": cfg.AnalysisMode,
 	})
 
 	go func() {

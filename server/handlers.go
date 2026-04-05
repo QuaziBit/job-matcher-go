@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -71,13 +72,18 @@ func registerRoutes(mux *http.ServeMux, cfg config.Config) {
 	mux.HandleFunc("/job/", handleJobDetail)
 	mux.HandleFunc("/resumes", handleResumes)
 
+	mux.HandleFunc("/jobs/preview", handleJobPreview)
 	mux.HandleFunc("/api/jobs/add-manual", handleAddJobManual)
 	mux.HandleFunc("/api/jobs/add", handleAddJob)
+	mux.HandleFunc("/api/jobs/scrape", handleScrapeJobPreview)
+	mux.HandleFunc("/api/jobs/save-preview", handleSavePreview)
 	mux.HandleFunc("/api/jobs/list", handleJobsList)
 	mux.HandleFunc("/api/jobs/", handleJobActions)
 	mux.HandleFunc("/api/analyses/", handleAnalysisActions)
 	mux.HandleFunc("/api/resumes/add", handleAddResume)
 	mux.HandleFunc("/api/resumes/", handleResumeActions)
+	mux.HandleFunc("/api/ollama/models", handleOllamaModels)
+	mux.HandleFunc("/api/providers/models", handleProviderModels)
 	mux.HandleFunc("/shutdown", handleShutdown)
 }
 
@@ -182,15 +188,60 @@ func handleJobDetail(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("✗ dbGetResumes error (job detail): %v", err)
 	}
+	// Load salary estimate from DB (nil if not yet estimated or empty).
+	var salaryEstimate *SalaryEstimate
+	if rawSalary, err := dbGetJobSalaryEstimate(id); err != nil {
+		log.Printf("✗ dbGetJobSalaryEstimate(%d) error: %v", id, err)
+	} else if rawSalary != "" {
+		var se SalaryEstimate
+		if err := json.Unmarshal([]byte(rawSalary), &se); err == nil {
+			salaryEstimate = &se
+		}
+	}
+
+	// Derive last-used resume, provider, model, and mode from the most recent analysis.
+	var lastResumeID    int64
+	lastProvider       := "anthropic"
+	lastAnalysisMode   := appCfg.AnalysisMode
+	lastOllamaModel    := appCfg.OllamaModel
+	lastAnthropicModel := appCfg.AnthropicModel
+	if len(analyses) > 0 {
+		a := analyses[0]
+		lastResumeID = a.ResumeID
+		if a.LLMProvider != "" {
+			lastProvider = a.LLMProvider
+		}
+		if a.AnalysisMode != "" {
+			lastAnalysisMode = a.AnalysisMode
+		}
+		if a.LLMModel != "" {
+			switch lastProvider {
+			case "ollama":
+				lastOllamaModel = a.LLMModel
+			case "anthropic":
+				lastAnthropicModel = a.LLMModel
+			}
+		}
+	} else if salaryEstimate != nil && salaryEstimate.LLMProvider != "" {
+		// Three-tier fallback: analyses → salary estimate → "anthropic"
+		lastProvider = salaryEstimate.LLMProvider
+	}
+
 	renderTemplate(w, "job_detail.html", JobDetailView{
-		Job:          *job,
-		Application:  *app,
-		Analyses:     analyses,
-		Resumes:      resumes,
-		OllamaModel:  appCfg.OllamaModel,
-		AnalysisMode: appCfg.AnalysisMode,
-		TextQuality:  assessJobTextQuality(job.RawDescription),
-		Comparison:   buildComparison(analyses),
+		Job:              *job,
+		Application:      *app,
+		Analyses:         analyses,
+		Resumes:          resumes,
+		OllamaModel:      lastOllamaModel,
+		AnthropicModel:   lastAnthropicModel,
+		AnalysisMode:     lastAnalysisMode,
+		LastAnalysisMode: lastAnalysisMode,
+		TextQuality:      assessJobTextQuality(job.RawDescription),
+		Comparison:       buildComparison(analyses),
+		LastResumeID:     lastResumeID,
+		LastProvider:     lastProvider,
+		SalaryEstimate:   salaryEstimate,
+		HasSalaryInJD:    jobHasSalary(job.RawDescription),
 	})
 }
 
@@ -268,17 +319,44 @@ func handleJobsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	f := JobFilters{
-		Search:   strings.TrimSpace(q.Get("search")),
-		Status:   status,
-		Score:    score,
-		Provider: provider,
-		Page:     page,
-		PerPage:  perPage,
+	addedDays := 0
+	if raw := q.Get("added_days"); raw != "" {
+		if d, err := strconv.Atoi(raw); err == nil && d > 0 {
+			addedDays = d
+		}
 	}
 
-	log.Printf("→ /api/jobs/list page=%d per_page=%d search=%q status=%q score=%q provider=%q",
-		f.Page, f.PerPage, f.Search, f.Status, f.Score, f.Provider)
+	// date_from / date_to: accept YYYY-MM-DD only to avoid SQL injection
+	dateFrom := q.Get("date_from")
+	dateTo   := q.Get("date_to")
+	validDate := func(s string) bool {
+		if len(s) != 10 { return false }
+		for i, c := range s {
+			if i == 4 || i == 7 {
+				if c != '-' { return false }
+			} else if c < '0' || c > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	if dateFrom != "" && !validDate(dateFrom) { dateFrom = "" }
+	if dateTo   != "" && !validDate(dateTo)   { dateTo = "" }
+
+	f := JobFilters{
+		Search:    strings.TrimSpace(q.Get("search")),
+		Status:    status,
+		Score:     score,
+		Provider:  provider,
+		Page:      page,
+		PerPage:   perPage,
+		AddedDays: addedDays,
+		DateFrom:  dateFrom,
+		DateTo:    dateTo,
+	}
+
+	log.Printf("→ /api/jobs/list page=%d per_page=%d search=%q status=%q score=%q provider=%q added_days=%d date_from=%q date_to=%q",
+		f.Page, f.PerPage, f.Search, f.Status, f.Score, f.Provider, f.AddedDays, f.DateFrom, f.DateTo)
 
 	jobs, total, err := dbGetJobListItems(f)
 	if err != nil {
@@ -358,6 +436,122 @@ func handleAddJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"job_id": id, "title": title, "company": company})
 }
 
+// handleScrapeJobPreview scrapes a URL and returns preview data without saving to DB.
+func handleScrapeJobPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	jobURL := strings.TrimSpace(r.FormValue("url"))
+	if jobURL == "" {
+		writeError(w, http.StatusBadRequest, "url is required")
+		return
+	}
+
+	// Check duplicate before scraping
+	existing, err := dbGetJobByURL(jobURL)
+	if err != nil {
+		log.Printf("✗ dbGetJobByURL error: %v", err)
+	}
+	if existing != nil {
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"error": "This URL has already been added.", "job_id": existing.ID, "title": existing.Title,
+		})
+		return
+	}
+
+	log.Printf("→ Scraping preview URL: %s", jobURL)
+	title, company, location, description, err := ScrapeJob(jobURL)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	log.Printf("✓ Scraped preview: %q (%s)", title, company)
+
+	tq := assessJobTextQuality(description)
+	blockers := []string{}
+	descLower := strings.ToLower(description)
+	for _, kw := range blockerKeywords {
+		if strings.Contains(descLower, strings.ToLower(kw)) {
+			blockers = append(blockers, kw)
+		}
+	}
+	hasWarnings := tq.Level != "ok" || len(blockers) > 0
+
+	writeJSON(w, http.StatusOK, ScrapePreviewResponse{
+		Title:           title,
+		Company:         company,
+		Location:        location,
+		Description:     description,
+		BlockerKeywords: blockers,
+		TextQuality:     tq,
+		HasWarnings:     hasWarnings,
+	})
+}
+
+// handleJobPreview serves the job preview page (shell — data is loaded from sessionStorage by JS).
+func handleJobPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	renderTemplate(w, "job_preview.html", nil)
+}
+
+// handleSavePreview validates and saves a previewed job to the DB.
+func handleSavePreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	jobURL := strings.TrimSpace(r.FormValue("url"))
+	title := strings.TrimSpace(r.FormValue("title"))
+	company := strings.TrimSpace(r.FormValue("company"))
+	location := strings.TrimSpace(r.FormValue("location"))
+	description := cleanText(r.FormValue("description"))
+
+	if jobURL == "" {
+		writeError(w, http.StatusBadRequest, "url is required")
+		return
+	}
+	if len(description) < 50 {
+		writeError(w, http.StatusBadRequest, "description too short (min 50 chars)")
+		return
+	}
+	// Truncate to 80 000 chars
+	if len(description) > 80000 {
+		description = description[:80000]
+	}
+
+	// Re-check duplicate
+	existing, err := dbGetJobByURL(jobURL)
+	if err != nil {
+		log.Printf("✗ dbGetJobByURL error: %v", err)
+	}
+	if existing != nil {
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"error": "This URL has already been added.", "job_id": existing.ID, "title": existing.Title,
+		})
+		return
+	}
+
+	id, err := dbInsertJob(jobURL, title, company, location, description)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("dbInsertJob error: %v", err))
+		return
+	}
+	log.Printf("✓ Preview job saved id=%d: %q", id, title)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"job_id": id, "title": title, "company": company})
+}
+
 func handleAddJobManual(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "POST required")
@@ -369,9 +563,10 @@ func handleAddJobManual(w http.ResponseWriter, r *http.Request) {
 	}
 	title := strings.TrimSpace(r.FormValue("title"))
 	company := strings.TrimSpace(r.FormValue("company"))
-	description := strings.TrimSpace(r.FormValue("description"))
+	location := strings.TrimSpace(r.FormValue("location"))
+	description := cleanText(r.FormValue("description"))
 
-	log.Printf("→ Manual job: title=%q company=%q desc_len=%d", title, company, len(description))
+	log.Printf("→ Manual job: title=%q company=%q location=%q desc_len=%d", title, company, location, len(description))
 
 	if len(description) < 50 {
 		writeError(w, http.StatusUnprocessableEntity, "Description is too short (minimum 50 characters).")
@@ -398,7 +593,7 @@ func handleAddJobManual(w http.ResponseWriter, r *http.Request) {
 		description = description[:8000] + "\n\n[...truncated for analysis]"
 	}
 
-	id, err := dbInsertJob(syntheticURL, title, company, "", description)
+	id, err := dbInsertJob(syntheticURL, title, company, location, description)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("dbInsertJob (manual) error: %v", err))
 		return
@@ -409,6 +604,11 @@ func handleAddJobManual(w http.ResponseWriter, r *http.Request) {
 
 func handleJobActions(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+
+	if r.Method == http.MethodDelete && strings.HasSuffix(path, "/salary-estimate") {
+		handleClearSalaryEstimate(w, r)
+		return
+	}
 
 	if r.Method == http.MethodDelete {
 		id, err := parseIDFromPath(path, "/api/jobs/")
@@ -450,6 +650,11 @@ func handleJobActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.Method == http.MethodPost && strings.HasSuffix(path, "/estimate-salary") {
+		handleEstimateSalary(w, r)
+		return
+	}
+
 	if r.Method == http.MethodPost && strings.HasSuffix(path, "/application") {
 		handleUpsertApplication(w, r)
 		return
@@ -485,10 +690,27 @@ func handleAnalyzeJob(w http.ResponseWriter, r *http.Request) {
 		provider = "anthropic"
 	}
 
+	// Apply per-request overrides: mode and model from the UI dropdowns.
+	cfg := appCfg
+	if mode := r.FormValue("analysis_mode"); mode != "" {
+		switch mode {
+		case "fast", "standard", "detailed":
+			cfg.AnalysisMode = mode
+		}
+	}
+	if provider == "ollama" {
+		if m := r.FormValue("ollama_model"); m != "" {
+			cfg.OllamaModel = m
+		}
+	} else if provider == "anthropic" {
+		if m := r.FormValue("cloud_model"); m != "" {
+			cfg.AnthropicModel = m
+		}
+	}
+
 	job, err := dbGetJobByID(jobID)
 	if err != nil {
-		log.Printf("✗ dbGetJobByID(%d) error: %v", jobID, err)
-		http.Error(w, "failed to load job", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to load job: %v", err))
 		return
 	}
 	if job == nil {
@@ -498,8 +720,7 @@ func handleAnalyzeJob(w http.ResponseWriter, r *http.Request) {
 
 	resume, err := dbGetResumeByID(resumeID)
 	if err != nil {
-		log.Printf("✗ dbGetResumeByID(%d) error: %v", resumeID, err)
-		http.Error(w, "failed to load resume", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to load resume: %v", err))
 		return
 	}
 	if resume == nil {
@@ -507,9 +728,9 @@ func handleAnalyzeJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("→ Analyzing job=%d resume=%d provider=%s", jobID, resumeID, provider)
+	log.Printf("→ Analyzing job=%d resume=%d provider=%s mode=%s", jobID, resumeID, provider, cfg.AnalysisMode)
 	startTime := time.Now()
-	analysis, err := AnalyzeMatch(resume.Content, job.RawDescription, provider, appCfg)
+	analysis, err := AnalyzeMatch(resume.Content, job.RawDescription, provider, cfg)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("analysis failed: %v", err))
 		return
@@ -563,6 +784,111 @@ func handleUpsertApplication(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, APIOK{OK: true})
 }
 
+// ── Salary API ────────────────────────────────────────────────────────────────
+
+func handleEstimateSalary(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 3 {
+		http.NotFound(w, r)
+		return
+	}
+	jobID, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+
+	cfg := appCfg
+	provider := strings.TrimSpace(r.FormValue("provider"))
+	if provider == "" {
+		provider = "anthropic"
+	}
+
+	// Guard incompatible models
+	if provider == "ollama" {
+		for _, blocked := range salaryIncompatibleModels {
+			if strings.Contains(strings.ToLower(cfg.OllamaModel), blocked) {
+				writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf(
+					"%s is not supported for salary estimation. Please switch to Anthropic or llama3.1:8b.", cfg.OllamaModel))
+				return
+			}
+		}
+	}
+
+	job, err := dbGetJobByID(jobID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to load job: %v", err))
+		return
+	}
+	if job == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Return cached estimate if available
+	cached, err := dbGetJobSalaryEstimate(jobID)
+	if err != nil {
+		log.Printf("✗ dbGetJobSalaryEstimate(%d) error: %v", jobID, err)
+	}
+	if cached != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, cached)
+		return
+	}
+
+	// Extract if JD has salary, otherwise estimate
+	var result map[string]interface{}
+	hasSalary := jobHasSalary(job.RawDescription)
+	if hasSalary {
+		log.Printf("→ JD has salary — extracting for job=%d", jobID)
+		result, err = extractSalary(job.Title, job.Company, job.Location, job.RawDescription, provider, cfg)
+		if err != nil {
+			// Fallback to estimate when extract fails (#8b)
+			log.Printf("→ extract failed for job=%d, falling back to estimate: %v", jobID, err)
+			result, err = estimateSalary(job.Title, job.Company, job.Location, job.RawDescription, provider, true, cfg)
+		}
+	} else {
+		log.Printf("→ Estimating salary for job=%d provider=%s", jobID, provider)
+		result, err = estimateSalary(job.Title, job.Company, job.Location, job.RawDescription, provider, false, cfg)
+	}
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+
+	// Cache in DB
+	cacheJSON, _ := json.Marshal(result)
+	if cacheErr := dbSetJobSalaryEstimate(jobID, string(cacheJSON)); cacheErr != nil {
+		log.Printf("✗ dbSetJobSalaryEstimate(%d) error: %v", jobID, cacheErr)
+	}
+	log.Printf("✓ Salary estimated job=%d min=%v max=%v conf=%v", jobID, result["min"], result["max"], result["confidence"])
+	writeJSON(w, http.StatusOK, result)
+}
+
+func handleClearSalaryEstimate(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 3 {
+		http.NotFound(w, r)
+		return
+	}
+	jobID, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := dbSetJobSalaryEstimate(jobID, ""); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("dbSetJobSalaryEstimate(%d) error: %v", jobID, err))
+		return
+	}
+	log.Printf("✓ Salary estimate cleared job=%d", jobID)
+	writeJSON(w, http.StatusOK, APIOK{OK: true})
+}
+
 // ── Analysis API ──────────────────────────────────────────────────────────────
 
 func handleAnalysisActions(w http.ResponseWriter, r *http.Request) {
@@ -601,7 +927,7 @@ func handleAddResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	label := strings.TrimSpace(r.FormValue("label"))
-	content := strings.TrimSpace(r.FormValue("content"))
+	content := cleanText(r.FormValue("content"))
 
 	log.Printf("→ Add resume: label=%q content_len=%d", label, len(content))
 
@@ -635,62 +961,6 @@ func handleResumeActions(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("✓ Resume deleted id=%d", id)
 	writeJSON(w, http.StatusOK, APIOK{OK: true})
-}
-
-// ── Resume Comparison ─────────────────────────────────────────────────────────
-
-func hasBlocker(skills []MissingSkill) bool {
-	for _, s := range skills {
-		if s.Severity == "blocker" {
-			return true
-		}
-	}
-	return false
-}
-
-func determineBetterFit(a, b Analysis) (string, string) {
-	aHasBlocker := hasBlocker(a.MissingSkills)
-	bHasBlocker := hasBlocker(b.MissingSkills)
-
-	if aHasBlocker && !bHasBlocker {
-		return b.ResumeLabel, "No hard blockers vs " + a.ResumeLabel + " which has blockers"
-	}
-	if bHasBlocker && !aHasBlocker {
-		return a.ResumeLabel, "No hard blockers vs " + b.ResumeLabel + " which has blockers"
-	}
-	if a.AdjustedScore > b.AdjustedScore {
-		return a.ResumeLabel, fmt.Sprintf("Higher adjusted score (%d vs %d)", a.AdjustedScore, b.AdjustedScore)
-	}
-	if b.AdjustedScore > a.AdjustedScore {
-		return b.ResumeLabel, fmt.Sprintf("Higher adjusted score (%d vs %d)", b.AdjustedScore, a.AdjustedScore)
-	}
-	return "Tie", "Both resumes score equally for this role"
-}
-
-func buildComparison(analyses []Analysis) *ResumeComparison {
-	if len(analyses) < 2 {
-		return nil
-	}
-	// Find two most recent analyses with different resume IDs
-	seen := map[int64]Analysis{}
-	for _, a := range analyses {
-		if _, exists := seen[a.ResumeID]; !exists {
-			seen[a.ResumeID] = a
-		}
-		if len(seen) == 2 {
-			break
-		}
-	}
-	if len(seen) < 2 {
-		return nil
-	}
-	var ids []int64
-	for id := range seen {
-		ids = append(ids, id)
-	}
-	ra, rb := seen[ids[0]], seen[ids[1]]
-	better, reason := determineBetterFit(ra, rb)
-	return &ResumeComparison{ResumeA: ra, ResumeB: rb, BetterFit: better, BetterReason: reason}
 }
 
 // ── Template view helpers ─────────────────────────────────────────────────────
@@ -775,6 +1045,71 @@ func buildClusterLines(missing []MissingSkill, clusters map[string]int) []Cluste
 		}
 	}
 	return lines
+}
+
+// ── Ollama proxy ──────────────────────────────────────────────────────────────
+
+// handleOllamaModels proxies GET /api/ollama/models to the configured Ollama
+// server so the browser avoids CORS issues hitting localhost:11434 directly.
+func handleOllamaModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	ollamaURL := appCfg.OllamaBaseURL
+	if ollamaURL == "" {
+		ollamaURL = "http://localhost:11434"
+	}
+	resp, err := http.Get(ollamaURL + "/api/tags")
+	if err != nil {
+		log.Printf("→ Ollama /api/tags unreachable: %v", err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"models": []string{}})
+		return
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		log.Printf("→ Ollama /api/tags error: status=%d err=%v", resp.StatusCode, err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"models": []string{}})
+		return
+	}
+	var payload struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Printf("→ Ollama /api/tags parse error: %v", err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"models": []string{}})
+		return
+	}
+	names := make([]string, 0, len(payload.Models))
+	for _, m := range payload.Models {
+		if m.Name != "" {
+			names = append(names, m.Name)
+		}
+	}
+	log.Printf("→ Ollama models proxy: returned %d models", len(names))
+	writeJSON(w, http.StatusOK, map[string]interface{}{"models": names})
+}
+
+// handleProviderModels serves GET /api/providers/models?provider=anthropic|openai|gemini
+// Returns the static list of known models for the requested cloud provider.
+func handleProviderModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	provider := r.URL.Query().Get("provider")
+	models, ok := knownModels[provider]
+	if !ok {
+		models = []KnownModel{}
+	}
+	log.Printf("→ Provider models: provider=%s count=%d", provider, len(models))
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"provider": provider,
+		"models":   models,
+	})
 }
 
 // ── Shutdown ──────────────────────────────────────────────────────────────────

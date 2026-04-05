@@ -1,24 +1,35 @@
 package launcher
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"testing"
 )
+
+// createTestDB creates a real SQLite DB with the 4 required tables at path.
+func createTestDB(t *testing.T, path string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("createTestDB open: %v", err)
+	}
+	defer db.Close()
+	for _, tbl := range requiredTables {
+		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS ` + tbl + ` (id INTEGER PRIMARY KEY)`); err != nil {
+			t.Fatalf("createTestDB create %s: %v", tbl, err)
+		}
+	}
+}
 
 // ── CheckSQLite ───────────────────────────────────────────────────────────────
 
 func TestCheckSQLite_ExistingFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.db")
-
-	// Create a non-empty file
-	if err := os.WriteFile(path, []byte("SQLite format 3"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	createTestDB(t, path)
 
 	result := CheckSQLite(path)
 	if result.Status != StatusOK {
@@ -36,13 +47,29 @@ func TestCheckSQLite_MissingFile(t *testing.T) {
 	}
 }
 
+func TestCheckSQLite_MissingTables(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.db")
+	// Create a valid SQLite DB but with no tables
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	db.Close()
+
+	result := CheckSQLite(path)
+	if result.Status != StatusWarn {
+		t.Errorf("expected warn for missing tables, got %s: %s", result.Status, result.Message)
+	}
+}
+
 func TestCheckSQLite_MessageContainsPath(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mydb.db")
-	os.WriteFile(path, []byte("data"), 0644)
+	createTestDB(t, path)
 
 	result := CheckSQLite(path)
-	if result.Status == StatusOK && result.Message == "" {
+	if result.Message == "" {
 		t.Error("expected message to contain path info")
 	}
 }
@@ -175,7 +202,7 @@ func TestRunAll_ReturnsAllThreeResults(t *testing.T) {
 
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
-	os.WriteFile(dbPath, []byte("db"), 0644)
+	createTestDB(t, dbPath)
 
 	report := RunAll(dbPath, mock.URL, "sk-ant-validkey123")
 

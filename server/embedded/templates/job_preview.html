@@ -1,0 +1,68 @@
+{{template "base.html" .}}
+
+{{define "title"}}Preview Job — Job Matcher{{end}}
+{{define "nav_jobs"}}active{{end}}
+
+{{define "content"}}
+<div class="page-header">
+  <div class="page-header-left">
+    <h2 class="page-title">Preview Job</h2>
+    <p class="page-subtitle">Review and edit before saving</p>
+  </div>
+  <div class="page-header-right">
+    <a href="/" class="btn btn--ghost">Cancel</a>
+  </div>
+</div>
+
+<!-- Warnings panel (hidden until JS populates it) -->
+<div id="preview-warnings" class="card" style="display:none; border-left:4px solid var(--warn,#e9a800); margin-bottom:1rem;">
+  <div class="card-header">
+    <h3 class="card-title" style="color:var(--warn,#e9a800);">⚠ Warnings</h3>
+  </div>
+  <div class="card-body" style="padding-top:0;">
+    <div id="preview-blockers" style="display:none; margin-bottom:.75rem;">
+      <strong>Blocker keywords detected:</strong>
+      <span id="preview-blocker-list" style="margin-left:.5rem;"></span>
+    </div>
+    <div id="preview-quality" style="display:none;">
+      <strong>Text quality (<span id="preview-quality-level"></span>):</strong>
+      <ul id="preview-quality-issues" style="margin:.25rem 0 0 1.25rem; padding:0;"></ul>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Job Details</h3>
+  </div>
+  <div class="card-body">
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="preview-title">Title</label>
+        <input id="preview-title" class="form-input" type="text" placeholder="Job title" />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="preview-company">Company</label>
+        <input id="preview-company" class="form-input" type="text" placeholder="Company name" />
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="preview-location">Location</label>
+      <input id="preview-location" class="form-input" type="text" placeholder="Location" />
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="preview-description">
+        Description
+        <span id="preview-char-count" style="font-weight:normal; color:var(--text-muted,#888); margin-left:.5rem;"></span>
+      </label>
+      <textarea id="preview-description" class="form-input" rows="18"
+        style="font-family:monospace; font-size:.85rem; resize:vertical;"
+        oninput="updatePreviewCharCount()"></textarea>
+    </div>
+    <div style="display:flex; gap:.75rem; margin-top:1rem;">
+      <button class="btn btn--primary" onclick="savePreview()">Save Job</button>
+      <a href="/" class="btn btn--ghost">Cancel</a>
+    </div>
+  </div>
+</div>
+{{end}}

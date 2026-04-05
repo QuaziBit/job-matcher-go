@@ -309,9 +309,15 @@ func attrVal(n *html.Node, key string) string {
 }
 
 var multiNewline = regexp.MustCompile(`\n{3,}`)
-var multiSpace = regexp.MustCompile(`[ \t]{2,}`)
+var multiSpace = regexp.MustCompile(` {2,}`)
+var controlChars = regexp.MustCompile(`[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]`)
 
+// cleanText removes control characters, normalises whitespace, and trims.
+// Tabs are replaced with a single space; non-printable control chars
+// (except newline) are removed; consecutive spaces are collapsed to one.
 func cleanText(s string) string {
+	s = controlChars.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "\t", " ")
 	s = multiNewline.ReplaceAllString(s, "\n\n")
 	s = multiSpace.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)

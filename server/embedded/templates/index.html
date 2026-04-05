@@ -35,6 +35,10 @@
     </div>
   </div>
   <div class="form-row">
+    <label>Location <span style="color:var(--text-dim);font-weight:400;">(optional)</span></label>
+    <input type="text" id="paste-location" placeholder="e.g. Remote, Austin TX" />
+  </div>
+  <div class="form-row">
     <label>Job Description</label>
     <textarea id="paste-description" placeholder="Paste the full job description here…"
               style="min-height: 160px; font-size: 12px;"></textarea>
@@ -44,7 +48,10 @@
 
 <!-- Search and filter bar -->
 <div class="filter-bar">
-  <input type="text" id="filter-search" placeholder="Search title or company…" autocomplete="off" />
+  <div class="search-wrap">
+    <input type="text" id="filter-search" placeholder="Search title, company, or recruiter…" autocomplete="off" />
+    <button id="search-clear-btn" class="search-clear-btn" onclick="clearSearch()" style="display:none;" title="Clear search">×</button>
+  </div>
   <select id="filter-status">
     <option value="">All Statuses</option>
     <option value="not_applied">Not Applied</option>
@@ -68,6 +75,16 @@
     <option value="ollama">Ollama</option>
     <option value="manual">Manual</option>
   </select>
+  <select id="filter-date">
+    <option value="">Any Time</option>
+    <option value="1">Today</option>
+    <option value="7">Last 7 days</option>
+    <option value="30">Last 30 days</option>
+    <option value="90">Last 90 days</option>
+  </select>
+  <button class="btn btn-ghost btn-sm" id="date-mode-btn" onclick="toggleDateMode()" title="Switch to date range">⋯</button>
+  <input type="date" id="filter-date-from" style="display:none;" title="From date" />
+  <input type="date" id="filter-date-to"   style="display:none;" title="To date" />
   <button class="btn btn-ghost btn-sm" onclick="clearFilters()" id="clear-btn" style="display:none;">
     ✕ Clear
   </button>

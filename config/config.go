@@ -18,7 +18,8 @@ type Config struct {
 	DBPath string `json:"db_path"`
 
 	// Anthropic
-	AnthropicAPIKey string `json:"anthropic_api_key"`
+	AnthropicAPIKey   string `json:"anthropic_api_key"`
+	AnthropicModel    string `json:"anthropic_model"` // e.g. claude-opus-4-5, claude-sonnet-4-6
 
 	// Ollama
 	OllamaBaseURL        string `json:"ollama_base_url"`
@@ -27,6 +28,7 @@ type Config struct {
 
 	// Analysis
 	AnalysisMode string `json:"analysis_mode"` // fast | standard | detailed
+	ShowMoreLogs bool   `json:"show_more_logs"`
 }
 
 // Defaults returns a Config populated with sensible defaults.
@@ -36,6 +38,7 @@ func Defaults() Config {
 		Host:                 "127.0.0.1",
 		DBPath:               "job_matcher.db",
 		AnthropicAPIKey:      "",
+		AnthropicModel:       "claude-opus-4-5",
 		OllamaBaseURL:        "http://localhost:11434",
 		OllamaModel:          "llama3.1:8b",
 		OllamaTimeoutSeconds: 600,
@@ -76,6 +79,9 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.OllamaModel == "" {
 		cfg.OllamaModel = "llama3.1:8b"
+	}
+	if cfg.AnthropicModel == "" {
+		cfg.AnthropicModel = "claude-opus-4-5"
 	}
 	if cfg.OllamaTimeoutSeconds == 0 {
 		cfg.OllamaTimeoutSeconds = 600

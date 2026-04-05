@@ -24,6 +24,15 @@
       <span style="color: var(--text-mute);">· pasted description</span>
     {{end}}
   </div>
+  {{if .SalaryEstimate}}
+  <div class="salary-badge-wrap" style="margin-top: 8px;">
+    <span class="salary-badge salary-{{.SalaryEstimate.Confidence}}">
+      {{if eq .SalaryEstimate.Source "posted"}}📌{{else}}~{{end}} {{formatSalaryRange .SalaryEstimate.Min .SalaryEstimate.Max .SalaryEstimate.Currency .SalaryEstimate.Period}}
+      <span class="salary-confidence">{{.SalaryEstimate.Source}} · {{.SalaryEstimate.Confidence}} confidence · {{.SalaryEstimate.LLMProvider}} ({{.SalaryEstimate.LLMModel}})</span>
+    </span>
+    <button class="btn-inline-mute" onclick="clearSalaryEstimate({{.Job.ID}})" title="Clear estimate">✕</button>
+  </div>
+  {{end}}
 </div>
 
 <div class="tab-container">
@@ -55,7 +64,7 @@
           {{if .Resumes}}
             <select id="analyze-resume">
               {{range .Resumes}}
-              <option value="{{.ID}}">{{.Label}}</option>
+              <option value="{{.ID}}"{{if eq .ID $.LastResumeID}} selected{{end}}>{{.Label}}</option>
               {{end}}
             </select>
           {{else}}
@@ -64,20 +73,51 @@
             </div>
           {{end}}
         </div>
-        <div class="form-row" style="margin:0;">
-          <label>LLM Provider</label>
-          <div class="llm-toggle">
-            <input type="radio" name="provider" id="p-anthropic" value="anthropic" checked />
-            <label for="p-anthropic">Anthropic</label>
-            <input type="radio" name="provider" id="p-ollama" value="ollama" />
-            <label for="p-ollama">Ollama ({{.OllamaModel}})</label>
+        <div>
+          <div class="form-row" style="margin:0 0 10px 0;">
+            <label>LLM Provider</label>
+            <div class="llm-toggle">
+              <input type="radio" name="provider" id="p-anthropic" value="anthropic"{{if ne .LastProvider "ollama"}} checked{{end}} onchange="updateProviderModelRow()"/>
+              <label for="p-anthropic">Anthropic</label>
+              <input type="radio" name="provider" id="p-ollama" value="ollama"{{if eq .LastProvider "ollama"}} checked{{end}} onchange="updateProviderModelRow()"/>
+              <label for="p-ollama">Ollama</label>
+            </div>
+          </div>
+          <div id="model-row-ollama" class="form-row" style="margin:0 0 10px 0;">
+            <label>Model</label>
+            <select id="analyze-ollama-model" data-default="{{.OllamaModel}}">
+              <option value="{{.OllamaModel}}">{{.OllamaModel}}</option>
+            </select>
+          </div>
+          <div id="model-row-cloud" class="form-row" style="margin:0 0 10px 0;">
+            <label>Model</label>
+            <select id="analyze-cloud-model"
+                    data-anthropic="{{.AnthropicModel}}"
+                    data-openai="" data-gemini="">
+              <option value="{{.AnthropicModel}}">{{.AnthropicModel}}</option>
+            </select>
+          </div>
+          <div class="form-row" style="margin:0;">
+            <label>Analysis Mode</label>
+            <select id="analyze-mode">
+              <option value="fast"{{if eq .LastAnalysisMode "fast"}} selected{{end}}>Fast (~30s)</option>
+              <option value="standard"{{if eq .LastAnalysisMode "standard"}} selected{{end}}>Standard (~90s)</option>
+              <option value="detailed"{{if eq .LastAnalysisMode "detailed"}} selected{{end}}>Detailed (~4min)</option>
+            </select>
           </div>
         </div>
       </div>
       <button id="analyze-btn" class="btn btn-primary"
               onclick="analyzeJob({{.Job.ID}})"
-              data-mode="{{.AnalysisMode}}"
               {{if empty .Resumes}}disabled{{end}}>Run Analysis</button>
+      <div style="margin-top: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+        <button id="salary-btn" class="btn btn-ghost" onclick="estimateSalary({{.Job.ID}})">
+          💰 {{if .HasSalaryInJD}}Extract Salary{{else}}Estimate Salary{{end}}
+        </button>
+        {{if .SalaryEstimate}}
+        <span class="text-dim" style="font-size: 0.8rem;">Salary cached — <button class="btn-inline-mute" onclick="rerunSalaryEstimate({{.Job.ID}})">re-run</button></span>
+        {{end}}
+      </div>
 
       <!-- Progress bar — shown while analysis is running -->
       <div id="analysis-progress" class="analysis-progress hidden">

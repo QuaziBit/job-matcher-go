@@ -4,26 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 )
-
-// setupHandlerTest initialises a fresh DB and returns a cleanup func.
-func setupHandlerTest(t *testing.T) func() {
-	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	if err := initDB(dbPath); err != nil {
-		t.Fatalf("initDB failed: %v", err)
-	}
-	return func() {
-		if db != nil {
-			db.Close()
-		}
-		os.Remove(dbPath)
-	}
-}
 
 // getJobsList is a test helper that fires a GET against /api/jobs/list
 // with the given query string and returns the decoded response + status code.
@@ -53,7 +35,7 @@ func getJobsListError(t *testing.T, query string) (APIError, int) {
 // ── Method validation ─────────────────────────────────────────────────────────
 
 func TestHandlerJobsList_WrongMethod_POST(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/jobs/list", nil)
@@ -66,7 +48,7 @@ func TestHandlerJobsList_WrongMethod_POST(t *testing.T) {
 }
 
 func TestHandlerJobsList_WrongMethod_PUT(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPut, "/api/jobs/list", nil)
@@ -81,7 +63,7 @@ func TestHandlerJobsList_WrongMethod_PUT(t *testing.T) {
 // ── Default params ────────────────────────────────────────────────────────────
 
 func TestHandlerJobsList_DefaultParams_EmptyDB(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	data, status := getJobsList(t, "")
@@ -103,7 +85,7 @@ func TestHandlerJobsList_DefaultParams_EmptyDB(t *testing.T) {
 }
 
 func TestHandlerJobsList_DefaultParams_WithJobs(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	dbInsertJob("https://example.com/j1", "Go Engineer", "Acme", "DC", "desc")
@@ -127,7 +109,7 @@ func TestHandlerJobsList_DefaultParams_WithJobs(t *testing.T) {
 // ── Response shape ────────────────────────────────────────────────────────────
 
 func TestHandlerJobsList_ResponseShape(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	rid, _ := dbInsertResume("v1", "resume")
@@ -165,7 +147,7 @@ func TestHandlerJobsList_ResponseShape(t *testing.T) {
 }
 
 func TestHandlerJobsList_IsManualFlag(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	dbInsertJob("manual://abc123", "Pasted Job", "", "", "desc")
@@ -193,7 +175,7 @@ func TestHandlerJobsList_IsManualFlag(t *testing.T) {
 // ── Parameter validation ──────────────────────────────────────────────────────
 
 func TestHandlerJobsList_InvalidPage_Letters(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	errData, status := getJobsListError(t, "page=abc")
@@ -206,7 +188,7 @@ func TestHandlerJobsList_InvalidPage_Letters(t *testing.T) {
 }
 
 func TestHandlerJobsList_InvalidPage_Negative(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	errData, status := getJobsListError(t, "page=-1")
@@ -219,7 +201,7 @@ func TestHandlerJobsList_InvalidPage_Negative(t *testing.T) {
 }
 
 func TestHandlerJobsList_InvalidPage_Zero(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	errData, status := getJobsListError(t, "page=0")
@@ -232,7 +214,7 @@ func TestHandlerJobsList_InvalidPage_Zero(t *testing.T) {
 }
 
 func TestHandlerJobsList_InvalidPerPage_Negative(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	errData, status := getJobsListError(t, "per_page=-5")
@@ -245,7 +227,7 @@ func TestHandlerJobsList_InvalidPerPage_Negative(t *testing.T) {
 }
 
 func TestHandlerJobsList_InvalidPerPage_Letters(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	errData, status := getJobsListError(t, "per_page=xyz")
@@ -258,7 +240,7 @@ func TestHandlerJobsList_InvalidPerPage_Letters(t *testing.T) {
 }
 
 func TestHandlerJobsList_InvalidStatus(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	errData, status := getJobsListError(t, "status=unknown_status")
@@ -271,7 +253,7 @@ func TestHandlerJobsList_InvalidStatus(t *testing.T) {
 }
 
 func TestHandlerJobsList_InvalidScore(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	errData, status := getJobsListError(t, "score=9")
@@ -284,7 +266,7 @@ func TestHandlerJobsList_InvalidScore(t *testing.T) {
 }
 
 func TestHandlerJobsList_InvalidProvider(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	errData, status := getJobsListError(t, "provider=openai")
@@ -299,7 +281,7 @@ func TestHandlerJobsList_InvalidProvider(t *testing.T) {
 // ── Valid filter params ───────────────────────────────────────────────────────
 
 func TestHandlerJobsList_ValidStatus_AllValues(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	statuses := []string{"not_applied", "applied", "interviewing", "offered", "rejected"}
@@ -312,7 +294,7 @@ func TestHandlerJobsList_ValidStatus_AllValues(t *testing.T) {
 }
 
 func TestHandlerJobsList_ValidScore_AllValues(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	scores := []string{"0", "1", "2", "3", "4", "5"}
@@ -325,7 +307,7 @@ func TestHandlerJobsList_ValidScore_AllValues(t *testing.T) {
 }
 
 func TestHandlerJobsList_ValidProvider_AllValues(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	providers := []string{"anthropic", "ollama", "manual"}
@@ -340,7 +322,7 @@ func TestHandlerJobsList_ValidProvider_AllValues(t *testing.T) {
 // ── Pagination ────────────────────────────────────────────────────────────────
 
 func TestHandlerJobsList_Pagination_Page1(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	for i := 0; i < 30; i++ {
@@ -366,7 +348,7 @@ func TestHandlerJobsList_Pagination_Page1(t *testing.T) {
 }
 
 func TestHandlerJobsList_Pagination_Page2(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	for i := 0; i < 30; i++ {
@@ -388,7 +370,7 @@ func TestHandlerJobsList_Pagination_Page2(t *testing.T) {
 }
 
 func TestHandlerJobsList_Pagination_PerPage0ReturnsAll(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	for i := 0; i < 5; i++ {
@@ -405,7 +387,7 @@ func TestHandlerJobsList_Pagination_PerPage0ReturnsAll(t *testing.T) {
 }
 
 func TestHandlerJobsList_Pagination_PageBeyondRange(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	dbInsertJob("https://example.com/j1", "Job", "", "", "desc")
@@ -425,7 +407,7 @@ func TestHandlerJobsList_Pagination_PageBeyondRange(t *testing.T) {
 // ── Search ────────────────────────────────────────────────────────────────────
 
 func TestHandlerJobsList_SearchParam(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	dbInsertJob("https://example.com/j1", "Go Engineer", "Acme", "DC", "desc")
@@ -441,7 +423,7 @@ func TestHandlerJobsList_SearchParam(t *testing.T) {
 }
 
 func TestHandlerJobsList_SearchParam_NoMatch(t *testing.T) {
-	cleanup := setupHandlerTest(t)
+	cleanup := setupTestDB(t)
 	defer cleanup()
 
 	dbInsertJob("https://example.com/j1", "Go Engineer", "Acme", "DC", "desc")

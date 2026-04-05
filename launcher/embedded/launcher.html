@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Job Matcher — Launcher</title>
+<style>{css}</style>
+</head>
+<body>
+<div class="card" id="main-card">
+  <div class="card-header">
+    <div class="header-inner">
+      <div>
+        <div class="logo-mark">// job-matcher</div>
+        <h1>Launcher</h1>
+      </div>
+      <button class="btn-layout" id="layout-toggle" onclick="toggleLayout()" title="Toggle layout">⇔</button>
+    </div>
+  </div>
+
+  <!-- ── Vertical layout ─────────────────────────────────────── -->
+  <div id="layout-vertical" class="hidden">
+    <div class="card-body">
+
+      <div class="section">
+        <div class="section-title">System Status</div>
+        <div id="health-sqlite" class="health-row loading">
+          <div class="health-icon"></div>
+          <div><div class="health-label">SQLite</div><div class="health-msg">Checking…</div></div>
+        </div>
+        <div id="health-ollama" class="health-row loading">
+          <div class="health-icon"></div>
+          <div><div class="health-label">Ollama</div><div class="health-msg">Checking…</div></div>
+        </div>
+        <div id="health-anthropic" class="health-row loading">
+          <div class="health-icon"></div>
+          <div><div class="health-label">Anthropic API</div><div class="health-msg">Checking…</div></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Server</div>
+        <div class="form-grid">
+          <div class="form-row" style="margin:0;">
+            <label>Port</label>
+            <input type="number" id="port" value="{port}" min="1024" max="65535"/>
+          </div>
+          <div class="form-row" style="margin:0;">
+            <label>Host</label>
+            <input type="text" id="host" value="{host}"/>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Database</div>
+        <div class="form-row">
+          <label>SQLite Path</label>
+          <input type="text" id="db_path" value="{db_path}"
+                 placeholder="./job_matcher.db"
+                 oninput="scheduleHealthCheck()"/>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">LLM Providers</div>
+        <div class="form-row">
+          <label>Anthropic API Key</label>
+          <input type="password" id="anthropic_api_key" value="{anthropic_api_key}"
+                 placeholder="sk-ant-..."
+                 oninput="scheduleHealthCheck()"/>
+        </div>
+        <div class="form-row">
+          <label>Anthropic Model</label>
+          <input type="text" id="anthropic_model" value="{anthropic_model}"
+                 placeholder="claude-opus-4-5"/>
+        </div>
+        <div class="form-row">
+          <label>Ollama URL</label>
+          <input type="text" id="ollama_base_url" value="{ollama_base_url}"
+                 oninput="scheduleHealthCheck()"/>
+        </div>
+        <div class="form-row">
+          <label>Ollama Model</label>
+          <select id="ollama_model">
+            <option value="{ollama_model}">{ollama_model}</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Ollama Timeout (seconds)</label>
+          <input type="number" id="ollama_timeout" value="{ollama_timeout}" min="30"/>
+        </div>
+        <div class="form-row">
+          <label>Analysis Mode</label>
+          <div class="toggle-group">
+            <label class="toggle-option">
+              <input type="radio" name="analysis_mode" value="fast" {checked_fast}/>
+              <span>Fast</span>
+              <small>~30s · short snippets · no suggestions</small>
+            </label>
+            <label class="toggle-option">
+              <input type="radio" name="analysis_mode" value="standard" {checked_standard}/>
+              <span>Standard</span>
+              <small>~90s · medium snippets · no suggestions</small>
+            </label>
+            <label class="toggle-option">
+              <input type="radio" name="analysis_mode" value="detailed" {checked_detailed}/>
+              <span>Detailed</span>
+              <small>~4min · full snippets · all skills</small>
+            </label>
+          </div>
+        </div>
+        <div class="form-row" style="margin-top:12px;margin-bottom:0;">
+          <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-size:13px;font-weight:400;cursor:pointer;letter-spacing:0;">
+            <input type="checkbox" id="show_more_logs" {checked_show_more_logs} style="width:auto;accent-color:var(--amber);cursor:pointer;"/>
+            Verbose logging
+          </label>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="start-btn" onclick="startApp()">
+        ▶ &nbsp;Start Job Matcher
+      </button>
+
+      <div id="running-panel" class="hidden" style="margin-top:14px;">
+        <div class="url-display" style="margin-bottom:10px;">
+          <span class="url-text" id="url-text"></span>
+          <a class="url-link" id="url-link" href="#" target="_blank">Open ↗</a>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-ghost" id="open-btn" onclick="openApp()" style="flex:1;">
+            🌐 &nbsp;Open App
+          </button>
+          <button class="btn btn-warning" id="restart-btn" onclick="restartApp()" style="flex:1;">
+            ↺ &nbsp;Restart
+          </button>
+          <button class="btn btn-danger" id="stop-btn" onclick="stopApp()" style="flex:1;">
+            ■ &nbsp;Stop
+          </button>
+        </div>
+        <div id="restart-note" class="hidden" style="margin-top:10px;font-size:11px;color:var(--text-dim);font-family:var(--mono);">
+          Change model or port above, then click Restart to apply.
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Horizontal layout ────────────────────────────────────── -->
+  <div id="layout-horizontal" class="hidden">
+    <div class="card-body">
+      <div class="h-grid">
+
+        <!-- Left: Status + Server + Database -->
+        <div>
+          <div class="section">
+            <div class="section-title">System Status</div>
+            <div id="h-health-sqlite" class="health-row loading">
+              <div class="health-icon"></div>
+              <div><div class="health-label">SQLite</div><div class="health-msg">Checking…</div></div>
+            </div>
+            <div id="h-health-ollama" class="health-row loading">
+              <div class="health-icon"></div>
+              <div><div class="health-label">Ollama</div><div class="health-msg">Checking…</div></div>
+            </div>
+            <div id="h-health-anthropic" class="health-row loading">
+              <div class="health-icon"></div>
+              <div><div class="health-label">Anthropic API</div><div class="health-msg">Checking…</div></div>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-title">Server</div>
+            <div class="form-grid">
+              <div class="form-row" style="margin:0;">
+                <label>Port</label>
+                <input type="number" id="h-port" value="{port}" min="1024" max="65535"/>
+              </div>
+              <div class="form-row" style="margin:0;">
+                <label>Host</label>
+                <input type="text" id="h-host" value="{host}"/>
+              </div>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-title">Database</div>
+            <div class="form-row">
+              <label>SQLite Path</label>
+              <input type="text" id="h-db_path" value="{db_path}"
+                     placeholder="./job_matcher.db"
+                     oninput="scheduleHealthCheck()"/>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: LLM Providers + Mode + Verbose -->
+        <div>
+          <div class="section">
+            <div class="section-title">LLM Providers</div>
+            <div class="form-row">
+              <label>Anthropic API Key</label>
+              <input type="password" id="h-anthropic_api_key" value="{anthropic_api_key}"
+                     placeholder="sk-ant-..."
+                     oninput="scheduleHealthCheck()"/>
+            </div>
+            <div class="form-row">
+              <label>Anthropic Model</label>
+              <input type="text" id="h-anthropic_model" value="{anthropic_model}"
+                     placeholder="claude-opus-4-5"/>
+            </div>
+            <div class="form-row">
+              <label>Ollama URL</label>
+              <input type="text" id="h-ollama_base_url" value="{ollama_base_url}"
+                     oninput="scheduleHealthCheck()"/>
+            </div>
+            <div class="form-row">
+              <label>Ollama Model</label>
+              <select id="h-ollama_model">
+                <option value="{ollama_model}">{ollama_model}</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Ollama Timeout (seconds)</label>
+              <input type="number" id="h-ollama_timeout" value="{ollama_timeout}" min="30"/>
+            </div>
+            <div class="form-row">
+              <label>Analysis Mode</label>
+              <div class="toggle-group">
+                <label class="toggle-option">
+                  <input type="radio" name="h-analysis_mode" value="fast" {checked_fast}/>
+                  <span>Fast</span>
+                  <small>~30s · short snippets · no suggestions</small>
+                </label>
+                <label class="toggle-option">
+                  <input type="radio" name="h-analysis_mode" value="standard" {checked_standard}/>
+                  <span>Standard</span>
+                  <small>~90s · medium snippets · no suggestions</small>
+                </label>
+                <label class="toggle-option">
+                  <input type="radio" name="h-analysis_mode" value="detailed" {checked_detailed}/>
+                  <span>Detailed</span>
+                  <small>~4min · full snippets · all skills</small>
+                </label>
+              </div>
+            </div>
+            <div class="form-row" style="margin-top:12px;margin-bottom:0;">
+              <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-size:13px;font-weight:400;cursor:pointer;letter-spacing:0;">
+                <input type="checkbox" id="h-show_more_logs" {checked_show_more_logs} style="width:auto;accent-color:var(--amber);cursor:pointer;"/>
+                Verbose logging
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Full width: Start + Running panel -->
+        <div class="h-col-full">
+          <button class="btn btn-primary" id="h-start-btn" onclick="startApp()">
+            ▶ &nbsp;Start Job Matcher
+          </button>
+          <div id="h-running-panel" class="hidden" style="margin-top:14px;">
+            <div class="url-display" style="margin-bottom:10px;">
+              <span class="url-text" id="h-url-text"></span>
+              <a class="url-link" id="h-url-link" href="#" target="_blank">Open ↗</a>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-ghost" id="h-open-btn" onclick="openApp()" style="flex:1;">
+                🌐 &nbsp;Open App
+              </button>
+              <button class="btn btn-warning" id="h-restart-btn" onclick="restartApp()" style="flex:1;">
+                ↺ &nbsp;Restart
+              </button>
+              <button class="btn btn-danger" id="h-stop-btn" onclick="stopApp()" style="flex:1;">
+                ■ &nbsp;Stop
+              </button>
+            </div>
+            <div id="h-restart-note" class="hidden" style="margin-top:10px;font-size:11px;color:var(--text-dim);font-family:var(--mono);">
+              Change model or port above, then click Restart to apply.
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div>
+<script>{js}</script>
+</body>
+</html>

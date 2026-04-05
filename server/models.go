@@ -96,15 +96,39 @@ type JobListItem struct {
 	BestScore     *int   `json:"best_score"`
 	AdjustedScore *int   `json:"adjusted_score"`
 	Provider      string `json:"provider"`
+	LastModel     string `json:"last_model"`
 	IsManual      bool   `json:"is_manual"`
+	HasRecruiter  bool   `json:"has_recruiter"`
+}
+
+type SalaryEstimate struct {
+	Min         int      `json:"min"`
+	Max         int      `json:"max"`
+	Currency    string   `json:"currency"`
+	Period      string   `json:"period"`      // "year" | "hour"
+	Confidence  string   `json:"confidence"`  // "high" | "medium" | "low"
+	Signals     []string `json:"signals"`
+	LLMProvider string   `json:"llm_provider"`
+	LLMModel    string   `json:"llm_model"`
+	Source      string   `json:"source"` // "estimated" | "posted"
 }
 
 type JobTextQuality struct {
-	Level         string   // "ok", "warn", "poor"
-	Issues        []string
-	CharCount     int
-	TechKeywords  int // count of recognized tech terms
-	BuzzwordCount int
+	Level         string   `json:"level"`          // "ok", "warn", "poor"
+	Issues        []string `json:"issues"`
+	CharCount     int      `json:"char_count"`
+	TechKeywords  int      `json:"tech_keywords"`  // count of recognized tech terms
+	BuzzwordCount int      `json:"buzzword_count"`
+}
+
+type ScrapePreviewResponse struct {
+	Title           string         `json:"title"`
+	Company         string         `json:"company"`
+	Location        string         `json:"location"`
+	Description     string         `json:"description"`
+	BlockerKeywords []string       `json:"blocker_keywords"`
+	TextQuality     JobTextQuality `json:"text_quality"`
+	HasWarnings     bool           `json:"has_warnings"`
 }
 
 type ResumeComparison struct {
@@ -115,14 +139,20 @@ type ResumeComparison struct {
 }
 
 type JobDetailView struct {
-	Job          Job
-	Application  Application
-	Analyses     []Analysis
-	Resumes      []Resume
-	OllamaModel  string
-	AnalysisMode string
-	TextQuality  JobTextQuality
-	Comparison   *ResumeComparison // nil if < 2 distinct resumes analyzed
+	Job              Job
+	Application      Application
+	Analyses         []Analysis
+	Resumes          []Resume
+	OllamaModel      string // pre-selected Ollama model (from last analysis or config default)
+	AnthropicModel   string // pre-selected Anthropic model (from last analysis or config default)
+	AnalysisMode     string // kept for backwards compat
+	LastAnalysisMode string // pre-selected mode (from last analysis or config default)
+	TextQuality      JobTextQuality
+	Comparison       *ResumeComparison // nil if < 2 distinct resumes analyzed
+	LastResumeID     int64             // resume_id from most recent analysis (0 if none)
+	LastProvider     string            // llm_provider from most recent analysis
+	SalaryEstimate   *SalaryEstimate   // nil if not yet estimated
+	HasSalaryInJD    bool              // true if JD contains explicit salary info
 }
 
 type IndexView struct {
@@ -147,12 +177,15 @@ type APIOK struct {
 // ── Pagination & filter models ────────────────────────────────────────────────
 
 type JobFilters struct {
-	Search   string
-	Status   string
-	Score    string // "", "0", "2", "3", "4", "5"
-	Provider string
-	Page     int
-	PerPage  int // 0 = all
+	Search    string
+	Status    string
+	Score     string // "", "0", "2", "3", "4", "5"
+	Provider  string
+	Page      int
+	PerPage   int // 0 = all
+	AddedDays int    // simple: last N days (0 = any time)
+	DateFrom  string // advanced: YYYY-MM-DD lower bound
+	DateTo    string // advanced: YYYY-MM-DD upper bound
 }
 
 type JobsListResponse struct {
