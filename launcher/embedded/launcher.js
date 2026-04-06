@@ -21,11 +21,8 @@ function syncLayouts(fromVert) {
     ['host',              'h-host'],
     ['db_path',           'h-db_path'],
     ['anthropic_api_key', 'h-anthropic_api_key'],
-    ['anthropic_model',   'h-anthropic_model'],
     ['openai_api_key',    'h-openai_api_key'],
-    ['openai_model',      'h-openai_model'],
     ['gemini_api_key',    'h-gemini_api_key'],
-    ['gemini_model',      'h-gemini_model'],
     ['ollama_base_url',   'h-ollama_base_url'],
     ['ollama_model',      'h-ollama_model'],
     ['ollama_timeout',    'h-ollama_timeout'],
@@ -204,11 +201,8 @@ async function startApp() {
   const host     = getActiveValue('host',              'h-host');
   const dbPath   = getActiveValue('db_path',           'h-db_path');
   const apiKey    = getActiveValue('anthropic_api_key', 'h-anthropic_api_key');
-  const antModel  = getActiveValue('anthropic_model',   'h-anthropic_model');
   const openaiKey = getActiveValue('openai_api_key',    'h-openai_api_key');
-  const openaiMod = getActiveValue('openai_model',      'h-openai_model');
   const geminiKey = getActiveValue('gemini_api_key',    'h-gemini_api_key');
-  const geminiMod = getActiveValue('gemini_model',      'h-gemini_model');
   const ollamaU   = getActiveValue('ollama_base_url',   'h-ollama_base_url');
   const model     = getActiveValue('ollama_model',      'h-ollama_model');
   const timeout   = getActiveValue('ollama_timeout',    'h-ollama_timeout');
@@ -228,11 +222,8 @@ async function startApp() {
   fd.append('host',              host);
   fd.append('db_path',           dbPath);
   fd.append('anthropic_api_key', apiKey);
-  fd.append('anthropic_model',   antModel);
   fd.append('openai_api_key',    openaiKey);
-  fd.append('openai_model',      openaiMod);
   fd.append('gemini_api_key',    geminiKey);
-  fd.append('gemini_model',      geminiMod);
   fd.append('ollama_base_url',   ollamaU);
   fd.append('ollama_model',      model);
   fd.append('ollama_timeout',    timeout);
@@ -333,11 +324,8 @@ async function restartApp() {
   const host     = getActiveValue('host',              'h-host');
   const dbPath   = getActiveValue('db_path',           'h-db_path');
   const apiKey    = getActiveValue('anthropic_api_key', 'h-anthropic_api_key');
-  const antModel  = getActiveValue('anthropic_model',   'h-anthropic_model');
   const openaiKey = getActiveValue('openai_api_key',    'h-openai_api_key');
-  const openaiMod = getActiveValue('openai_model',      'h-openai_model');
   const geminiKey = getActiveValue('gemini_api_key',    'h-gemini_api_key');
-  const geminiMod = getActiveValue('gemini_model',      'h-gemini_model');
   const ollamaU   = getActiveValue('ollama_base_url',   'h-ollama_base_url');
   const timeout   = getActiveValue('ollama_timeout',    'h-ollama_timeout');
   const mode      = getActiveMode();
@@ -351,11 +339,8 @@ async function restartApp() {
   fd.append('host',              host);
   fd.append('db_path',           dbPath);
   fd.append('anthropic_api_key', apiKey);
-  fd.append('anthropic_model',   antModel);
   fd.append('openai_api_key',    openaiKey);
-  fd.append('openai_model',      openaiMod);
   fd.append('gemini_api_key',    geminiKey);
-  fd.append('gemini_model',      geminiMod);
   fd.append('ollama_base_url',   ollamaU);
   fd.append('ollama_model',      model);
   fd.append('ollama_timeout',    timeout);

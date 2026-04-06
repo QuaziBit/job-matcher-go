@@ -141,17 +141,8 @@ func (l *Launcher) parseConfig(r *http.Request) config.Config {
 		cfg.DBPath = v
 	}
 	cfg.AnthropicAPIKey = r.FormValue("anthropic_api_key")
-	if v := r.FormValue("anthropic_model"); v != "" {
-		cfg.AnthropicModel = v
-	}
 	cfg.OpenAIAPIKey = r.FormValue("openai_api_key")
-	if v := r.FormValue("openai_model"); v != "" {
-		cfg.OpenAIModel = v
-	}
 	cfg.GeminiAPIKey = r.FormValue("gemini_api_key")
-	if v := r.FormValue("gemini_model"); v != "" {
-		cfg.GeminiModel = v
-	}
 	if v := r.FormValue("ollama_base_url"); v != "" {
 		cfg.OllamaBaseURL = v
 	}
