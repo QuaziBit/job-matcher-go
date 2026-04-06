@@ -537,3 +537,71 @@ func TestHasBlocker_FalseWhenNoBlocker(t *testing.T) {
 		t.Error("expected hasBlocker to return false")
 	}
 }
+
+// ── Provider availability flags ───────────────────────────────────────────────
+
+func TestOllamaAvailable_ReachableServer(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"models":[]}`))
+	}))
+	defer mock.Close()
+
+	origURL := appCfg.OllamaBaseURL
+	appCfg.OllamaBaseURL = mock.URL
+	defer func() { appCfg.OllamaBaseURL = origURL }()
+
+	if !ollamaAvailable() {
+		t.Error("expected ollamaAvailable()=true when server responds 200")
+	}
+}
+
+func TestOllamaAvailable_UnreachableServer(t *testing.T) {
+	origURL := appCfg.OllamaBaseURL
+	appCfg.OllamaBaseURL = "http://127.0.0.1:19998"
+	defer func() { appCfg.OllamaBaseURL = origURL }()
+
+	if ollamaAvailable() {
+		t.Error("expected ollamaAvailable()=false when server is not running")
+	}
+}
+
+func TestProviderFlags_AnthropicKeyPresent(t *testing.T) {
+	origKey := appCfg.AnthropicAPIKey
+	appCfg.AnthropicAPIKey = "sk-ant-testkey"
+	defer func() { appCfg.AnthropicAPIKey = origKey }()
+
+	if appCfg.AnthropicAPIKey == "" {
+		t.Error("expected HasAnthropic=true when key is set")
+	}
+}
+
+func TestProviderFlags_AnthropicKeyAbsent(t *testing.T) {
+	origKey := appCfg.AnthropicAPIKey
+	appCfg.AnthropicAPIKey = ""
+	defer func() { appCfg.AnthropicAPIKey = origKey }()
+
+	if appCfg.AnthropicAPIKey != "" {
+		t.Error("expected HasAnthropic=false when key is empty")
+	}
+}
+
+func TestProviderFlags_OpenAIKeyPresent(t *testing.T) {
+	origKey := appCfg.OpenAIAPIKey
+	appCfg.OpenAIAPIKey = "sk-proj-testkey"
+	defer func() { appCfg.OpenAIAPIKey = origKey }()
+
+	if appCfg.OpenAIAPIKey == "" {
+		t.Error("expected HasOpenAI=true when key is set")
+	}
+}
+
+func TestProviderFlags_GeminiKeyPresent(t *testing.T) {
+	origKey := appCfg.GeminiAPIKey
+	appCfg.GeminiAPIKey = "AIzaSy-testkey"
+	defer func() { appCfg.GeminiAPIKey = origKey }()
+
+	if appCfg.GeminiAPIKey == "" {
+		t.Error("expected HasGemini=true when key is set")
+	}
+}

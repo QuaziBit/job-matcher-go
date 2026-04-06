@@ -247,3 +247,74 @@ func TestLauncherUsesRandomPort(t *testing.T) {
 		t.Error("expected two launchers to use different ports")
 	}
 }
+
+func TestLauncherClearsAnthropicKeyWhenEmpty(t *testing.T) {
+	l, startCh, _ := newTestLauncher(t)
+	launcherURL, _ := l.Start()
+	defer l.Stop()
+
+	// First start with a key set
+	formData := url.Values{}
+	formData.Set("port", "9091")
+	formData.Set("host", "127.0.0.1")
+	formData.Set("db_path", "./test.db")
+	formData.Set("anthropic_api_key", "sk-ant-original")
+	formData.Set("ollama_base_url", "http://localhost:11434")
+	formData.Set("ollama_model", "llama3.1:8b")
+	formData.Set("ollama_timeout", "300")
+
+	resp, err := http.PostForm(launcherURL+"/start", formData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	<-startCh // drain startCh
+
+	// Restart with empty key — should clear it
+	formData.Set("anthropic_api_key", "")
+	resp2, err := http.PostForm(launcherURL+"/restart", formData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+
+	// Restart signals on restartCh, not startCh
+	select {
+	case cfg := <-l.RestartCh():
+		if cfg.AnthropicAPIKey != "" {
+			t.Errorf("expected empty AnthropicAPIKey after clearing, got %q", cfg.AnthropicAPIKey)
+		}
+	default:
+		t.Error("expected config on restartCh after restart")
+	}
+}
+
+func TestLauncherOpenAIKeyCanBeCleared(t *testing.T) {
+	l, startCh, _ := newTestLauncher(t)
+	launcherURL, _ := l.Start()
+	defer l.Stop()
+
+	formData := url.Values{}
+	formData.Set("port", "9092")
+	formData.Set("host", "127.0.0.1")
+	formData.Set("db_path", "./test.db")
+	formData.Set("openai_api_key", "")
+	formData.Set("ollama_base_url", "http://localhost:11434")
+	formData.Set("ollama_model", "llama3.1:8b")
+	formData.Set("ollama_timeout", "300")
+
+	resp, err := http.PostForm(launcherURL+"/start", formData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	select {
+	case cfg := <-startCh:
+		if cfg.OpenAIAPIKey != "" {
+			t.Errorf("expected empty OpenAIAPIKey, got %q", cfg.OpenAIAPIKey)
+		}
+	default:
+		t.Error("expected config on startCh")
+	}
+}

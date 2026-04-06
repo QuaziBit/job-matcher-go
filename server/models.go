@@ -153,6 +153,10 @@ type JobDetailView struct {
 	Comparison       *ResumeComparison // nil if < 2 distinct resumes analyzed
 	LastResumeID     int64             // resume_id from most recent analysis (0 if none)
 	LastProvider     string            // llm_provider from most recent analysis
+	HasAnthropic     bool              // true if Anthropic API key is configured
+	HasOpenAI        bool              // true if OpenAI API key is configured
+	HasGemini        bool              // true if Gemini API key is configured
+	HasOllama        bool              // true if Ollama is reachable
 	SalaryEstimate   *SalaryEstimate   // nil if not yet estimated
 	HasSalaryInJD    bool              // true if JD contains explicit salary info
 }

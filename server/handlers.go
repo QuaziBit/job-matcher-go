@@ -16,6 +16,17 @@ import (
 
 var appCfg config.Config
 
+// ollamaAvailable does a fast HEAD/GET to Ollama to check if it is reachable.
+func ollamaAvailable() bool {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(appCfg.OllamaBaseURL + "/api/tags")
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == 200
+}
+
 // ── Request logging middleware ────────────────────────────────────────────────
 
 type loggedMux struct{ mux *http.ServeMux }
@@ -250,6 +261,10 @@ func handleJobDetail(w http.ResponseWriter, r *http.Request) {
 		LastProvider:     lastProvider,
 		SalaryEstimate:   salaryEstimate,
 		HasSalaryInJD:    jobHasSalary(job.RawDescription),
+		HasAnthropic:     appCfg.AnthropicAPIKey != "",
+		HasOpenAI:        appCfg.OpenAIAPIKey != "",
+		HasGemini:        appCfg.GeminiAPIKey != "",
+		HasOllama:        ollamaAvailable(),
 	})
 }
 

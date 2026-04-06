@@ -140,9 +140,7 @@ func (l *Launcher) parseConfig(r *http.Request) config.Config {
 	if v := r.FormValue("db_path"); v != "" {
 		cfg.DBPath = v
 	}
-	if v := r.FormValue("anthropic_api_key"); v != "" {
-		cfg.AnthropicAPIKey = v
-	}
+	cfg.AnthropicAPIKey = r.FormValue("anthropic_api_key")
 	if v := r.FormValue("anthropic_model"); v != "" {
 		cfg.AnthropicModel = v
 	}
