@@ -26,7 +26,7 @@ func analyzeWithAnthropic(resume, jobDescription string, cfg config.Config) (Ana
 	if model == "" {
 		model = "claude-opus-4-5"
 	}
-	log.Printf("→ Calling Anthropic API (model: %s)", model)
+	log.Printf("→ Calling Anthropic API (model: %s mode: %s)", model, cfg.AnalysisMode)
 	if cfg.AnthropicAPIKey == "" {
 		return Analysis{}, fmt.Errorf("Anthropic API key is not set — add it in the launcher or config.json")
 	}
@@ -83,6 +83,13 @@ func analyzeWithAnthropic(resume, jobDescription string, cfg config.Config) (Ana
 		return Analysis{}, err
 	}
 	log.Printf("✓ Anthropic response: score=%d adjusted=%d", analysis.Score, analysis.AdjustedScore)
+	if showMoreLogs() {
+		preview := result.Content[0].Text
+		if len(preview) > 800 {
+			preview = preview[:800]
+		}
+		log.Printf("→ Anthropic raw body:\n%s", preview)
+	}
 	analysis.LLMProvider = "anthropic"
 	analysis.LLMModel = model
 	analysis.AnalysisMode = cfg.AnalysisMode
@@ -341,12 +348,187 @@ func partialFallbackAnalysis() Analysis {
 	}
 }
 
+func analyzeWithOpenAI(resume, jobDescription string, cfg config.Config) (Analysis, error) {
+	model := cfg.OpenAIModel
+	if model == "" {
+		model = "gpt-4o-mini"
+	}
+	log.Printf("→ Calling OpenAI API (model: %s mode: %s)", model, cfg.AnalysisMode)
+	if cfg.OpenAIAPIKey == "" {
+		return Analysis{}, fmt.Errorf("OpenAI API key is not set — add it in the launcher or config.json")
+	}
+	mcfg := getModeConfig(cfg)
+	payload := map[string]interface{}{
+		"model":      model,
+		"max_tokens": mcfg.MaxTokens,
+		"messages": []map[string]string{
+			{"role": "system", "content": buildSystemPrompt(mcfg, cfg.AnalysisMode, true)},
+			{"role": "user", "content": buildUserPrompt(resume, jobDescription)},
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return Analysis{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+cfg.OpenAIAPIKey)
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return Analysis{}, fmt.Errorf("OpenAI API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return Analysis{}, fmt.Errorf("OpenAI API error %d: %s", resp.StatusCode, string(b))
+	}
+
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return Analysis{}, fmt.Errorf("failed to decode OpenAI response: %w", err)
+	}
+	if len(result.Choices) == 0 {
+		return Analysis{}, fmt.Errorf("empty response from OpenAI")
+	}
+
+	analysis, err := parseLLMResponse(result.Choices[0].Message.Content, jobDescription, getModeConfig(cfg))
+	if err != nil {
+		rawPreview := result.Choices[0].Message.Content
+		if len(rawPreview) > 1000 {
+			rawPreview = rawPreview[:1000]
+		}
+		log.Printf("✗ OpenAI response parse error: %v\nRaw (first 1000 chars):\n%s", err, rawPreview)
+		return Analysis{}, err
+	}
+	log.Printf("✓ OpenAI response: score=%d adjusted=%d", analysis.Score, analysis.AdjustedScore)
+	if showMoreLogs() {
+		preview := result.Choices[0].Message.Content
+		if len(preview) > 800 {
+			preview = preview[:800]
+		}
+		log.Printf("→ OpenAI raw body:\n%s", preview)
+	}
+	analysis.LLMProvider = "openai"
+	analysis.LLMModel = model
+	analysis.AnalysisMode = cfg.AnalysisMode
+	return analysis, nil
+}
+
+func analyzeWithGemini(resume, jobDescription string, cfg config.Config) (Analysis, error) {
+	model := cfg.GeminiModel
+	if model == "" {
+		model = "gemini-2.5-flash"
+	}
+	log.Printf("→ Calling Gemini API (model: %s mode: %s)", model, cfg.AnalysisMode)
+	if cfg.GeminiAPIKey == "" {
+		return Analysis{}, fmt.Errorf("Gemini API key is not set — add it in the launcher or config.json")
+	}
+	mcfg := getModeConfig(cfg)
+
+	type geminiPart struct {
+		Text string `json:"text"`
+	}
+	type geminiContent struct {
+		Role  string      `json:"role"`
+		Parts []geminiPart `json:"parts"`
+	}
+	payload := map[string]interface{}{
+		"system_instruction": map[string]interface{}{
+			"parts": []geminiPart{{Text: buildSystemPrompt(mcfg, cfg.AnalysisMode, true)}},
+		},
+		"contents": []geminiContent{
+			{Role: "user", Parts: []geminiPart{{Text: buildUserPrompt(resume, jobDescription)}}},
+		},
+		"generationConfig": map[string]interface{}{
+			// Do not cap maxOutputTokens for Gemini — thinking models (gemini-2.5-flash etc.)
+			// consume tokens internally before visible output, so a hard cap starves the
+			// response and causes it to return a truncated/fast-style result.
+			"temperature": 0.2,
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, cfg.GeminiAPIKey)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return Analysis{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return Analysis{}, fmt.Errorf("Gemini API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return Analysis{}, fmt.Errorf("Gemini API error %d: %s", resp.StatusCode, string(b))
+	}
+
+	var result struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return Analysis{}, fmt.Errorf("failed to decode Gemini response: %w", err)
+	}
+	if len(result.Candidates) == 0 || len(result.Candidates[0].Content.Parts) == 0 {
+		return Analysis{}, fmt.Errorf("empty response from Gemini")
+	}
+
+	text := result.Candidates[0].Content.Parts[0].Text
+	analysis, err := parseLLMResponse(text, jobDescription, getModeConfig(cfg))
+	if err != nil {
+		rawPreview := text
+		if len(rawPreview) > 1000 {
+			rawPreview = rawPreview[:1000]
+		}
+		log.Printf("✗ Gemini response parse error: %v\nRaw (first 1000 chars):\n%s", err, rawPreview)
+		return Analysis{}, err
+	}
+	log.Printf("✓ Gemini response: score=%d adjusted=%d", analysis.Score, analysis.AdjustedScore)
+	if showMoreLogs() {
+		preview := text
+		if len(preview) > 800 {
+			preview = preview[:800]
+		}
+		log.Printf("→ Gemini raw body:\n%s", preview)
+	}
+	analysis.LLMProvider = "gemini"
+	analysis.LLMModel = model
+	analysis.AnalysisMode = cfg.AnalysisMode
+	return analysis, nil
+}
+
 // callLLMOnce dispatches to the right provider for a single attempt.
 func callLLMOnce(resume, jd, provider string, cfg config.Config) (Analysis, error) {
-	if provider == "ollama" {
+	switch provider {
+	case "ollama":
 		return analyzeWithOllama(resume, jd, cfg)
+	case "openai":
+		return analyzeWithOpenAI(resume, jd, cfg)
+	case "gemini":
+		return analyzeWithGemini(resume, jd, cfg)
+	default:
+		return analyzeWithAnthropic(resume, jd, cfg)
 	}
-	return analyzeWithAnthropic(resume, jd, cfg)
 }
 
 // AnalyzeMatch runs the analysis with up to maxRetries attempts, validating

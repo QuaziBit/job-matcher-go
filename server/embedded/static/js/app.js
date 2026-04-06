@@ -345,7 +345,9 @@ async function analyzeJob(jobId) {
     const sel = document.getElementById('analyze-cloud-model');
     cloudModel = sel ? sel.value : '';
   }
-  const modelLabel = provider === 'ollama' ? (ollamaModel || 'Ollama') : (cloudModel || 'Anthropic');
+  const modelLabel = provider === 'ollama'
+    ? (ollamaModel || 'Ollama')
+    : (cloudModel || provider.charAt(0).toUpperCase() + provider.slice(1));
 
   log('analyzeJob', `jobId=${jobId} resumeId=${resumeSelect.value} provider=${provider} mode=${mode} model=${modelLabel}`);
 
@@ -1145,8 +1147,9 @@ async function clearSalaryEstimate(jobId) {
 }
 
 async function rerunSalaryEstimate(jobId) {
-  const rerunBtn = document.querySelector(`button[onclick="rerunSalaryEstimate(${jobId})"]`);
-  if (rerunBtn) { rerunBtn.disabled = true; rerunBtn.innerHTML = '<span class="spinner"></span> re-running…'; }
+  const rerunBtn = document.getElementById('salary-rerun-btn')
+                || document.querySelector(`button[onclick="rerunSalaryEstimate(${jobId})"]`);
+  if (rerunBtn) { rerunBtn.disabled = true; rerunBtn.innerHTML = '<span class="spinner" style="width:10px;height:10px;border-width:1.5px;vertical-align:middle;"></span> re-running…'; }
   try {
     const delRes = await fetch(`/api/jobs/${jobId}/salary-estimate`, { method: 'DELETE' });
     if (!delRes.ok) {

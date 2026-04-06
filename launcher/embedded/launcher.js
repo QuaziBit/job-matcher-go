@@ -22,6 +22,10 @@ function syncLayouts(fromVert) {
     ['db_path',           'h-db_path'],
     ['anthropic_api_key', 'h-anthropic_api_key'],
     ['anthropic_model',   'h-anthropic_model'],
+    ['openai_api_key',    'h-openai_api_key'],
+    ['openai_model',      'h-openai_model'],
+    ['gemini_api_key',    'h-gemini_api_key'],
+    ['gemini_model',      'h-gemini_model'],
     ['ollama_base_url',   'h-ollama_base_url'],
     ['ollama_model',      'h-ollama_model'],
     ['ollama_timeout',    'h-ollama_timeout'],
@@ -109,9 +113,11 @@ function getActiveMode() {
 // ── Health checks ─────────────────────────────────────────────────────────────
 function getFormValues() {
   return {
-    db_path:    getActiveValue('db_path',           'h-db_path'),
-    ollama_url: getActiveValue('ollama_base_url',   'h-ollama_base_url'),
-    api_key:    getActiveValue('anthropic_api_key', 'h-anthropic_api_key'),
+    db_path:      getActiveValue('db_path',           'h-db_path'),
+    ollama_url:   getActiveValue('ollama_base_url',   'h-ollama_base_url'),
+    api_key:      getActiveValue('anthropic_api_key', 'h-anthropic_api_key'),
+    openai_key:   getActiveValue('openai_api_key',    'h-openai_api_key'),
+    gemini_key:   getActiveValue('gemini_api_key',    'h-gemini_api_key'),
   };
 }
 
@@ -145,7 +151,13 @@ function populateModelSelect(selId, models) {
 async function runHealthChecks() {
   log('runHealthChecks', 'running...');
   const v = getFormValues();
-  const params = new URLSearchParams({ db_path: v.db_path, ollama_url: v.ollama_url, api_key: v.api_key });
+  const params = new URLSearchParams({
+    db_path:    v.db_path,
+    ollama_url: v.ollama_url,
+    api_key:    v.api_key,
+    openai_key: v.openai_key,
+    gemini_key: v.gemini_key,
+  });
   try {
     const res  = await fetch('/health?' + params);
     if (!res.ok) { logErr('runHealthChecks', 'HTTP ' + res.status); return; }
@@ -155,9 +167,13 @@ async function runHealthChecks() {
     updateHealthRow('health-sqlite',      data.sqlite);
     updateHealthRow('health-ollama',      data.ollama);
     updateHealthRow('health-anthropic',   data.anthropic);
+    updateHealthRow('health-openai',      data.openai);
+    updateHealthRow('health-gemini',      data.gemini);
     updateHealthRow('h-health-sqlite',    data.sqlite);
     updateHealthRow('h-health-ollama',    data.ollama);
     updateHealthRow('h-health-anthropic', data.anthropic);
+    updateHealthRow('h-health-openai',    data.openai);
+    updateHealthRow('h-health-gemini',    data.gemini);
 
     if (data.models && data.models.length > 0) {
       log('runHealthChecks', 'populating ' + data.models.length + ' models');
@@ -187,13 +203,17 @@ async function startApp() {
   const port     = getActiveValue('port',              'h-port');
   const host     = getActiveValue('host',              'h-host');
   const dbPath   = getActiveValue('db_path',           'h-db_path');
-  const apiKey   = getActiveValue('anthropic_api_key', 'h-anthropic_api_key');
-  const antModel = getActiveValue('anthropic_model',   'h-anthropic_model');
-  const ollamaU  = getActiveValue('ollama_base_url',   'h-ollama_base_url');
-  const model    = getActiveValue('ollama_model',      'h-ollama_model');
-  const timeout  = getActiveValue('ollama_timeout',    'h-ollama_timeout');
-  const mode     = getActiveMode();
-  const showLogs = getActiveChecked('show_more_logs',  'h-show_more_logs');
+  const apiKey    = getActiveValue('anthropic_api_key', 'h-anthropic_api_key');
+  const antModel  = getActiveValue('anthropic_model',   'h-anthropic_model');
+  const openaiKey = getActiveValue('openai_api_key',    'h-openai_api_key');
+  const openaiMod = getActiveValue('openai_model',      'h-openai_model');
+  const geminiKey = getActiveValue('gemini_api_key',    'h-gemini_api_key');
+  const geminiMod = getActiveValue('gemini_model',      'h-gemini_model');
+  const ollamaU   = getActiveValue('ollama_base_url',   'h-ollama_base_url');
+  const model     = getActiveValue('ollama_model',      'h-ollama_model');
+  const timeout   = getActiveValue('ollama_timeout',    'h-ollama_timeout');
+  const mode      = getActiveMode();
+  const showLogs  = getActiveChecked('show_more_logs',  'h-show_more_logs');
 
   const maskedKey = apiKey ? apiKey.substring(0, 12) + '...' : 'empty';
   log('startApp', 'sending: port=' + port + ' model=' + model + ' key=' + maskedKey);
@@ -209,6 +229,10 @@ async function startApp() {
   fd.append('db_path',           dbPath);
   fd.append('anthropic_api_key', apiKey);
   fd.append('anthropic_model',   antModel);
+  fd.append('openai_api_key',    openaiKey);
+  fd.append('openai_model',      openaiMod);
+  fd.append('gemini_api_key',    geminiKey);
+  fd.append('gemini_model',      geminiMod);
   fd.append('ollama_base_url',   ollamaU);
   fd.append('ollama_model',      model);
   fd.append('ollama_timeout',    timeout);
@@ -308,12 +332,16 @@ async function restartApp() {
 
   const host     = getActiveValue('host',              'h-host');
   const dbPath   = getActiveValue('db_path',           'h-db_path');
-  const apiKey   = getActiveValue('anthropic_api_key', 'h-anthropic_api_key');
-  const antModel = getActiveValue('anthropic_model',   'h-anthropic_model');
-  const ollamaU  = getActiveValue('ollama_base_url',   'h-ollama_base_url');
-  const timeout  = getActiveValue('ollama_timeout',    'h-ollama_timeout');
-  const mode     = getActiveMode();
-  const showLogs = getActiveChecked('show_more_logs',  'h-show_more_logs');
+  const apiKey    = getActiveValue('anthropic_api_key', 'h-anthropic_api_key');
+  const antModel  = getActiveValue('anthropic_model',   'h-anthropic_model');
+  const openaiKey = getActiveValue('openai_api_key',    'h-openai_api_key');
+  const openaiMod = getActiveValue('openai_model',      'h-openai_model');
+  const geminiKey = getActiveValue('gemini_api_key',    'h-gemini_api_key');
+  const geminiMod = getActiveValue('gemini_model',      'h-gemini_model');
+  const ollamaU   = getActiveValue('ollama_base_url',   'h-ollama_base_url');
+  const timeout   = getActiveValue('ollama_timeout',    'h-ollama_timeout');
+  const mode      = getActiveMode();
+  const showLogs  = getActiveChecked('show_more_logs',  'h-show_more_logs');
 
   const maskedKey = apiKey ? apiKey.substring(0, 12) + '...' : 'empty';
   log('restartApp', 'new config: port=' + port + ' model=' + model + ' key=' + maskedKey);
@@ -324,6 +352,10 @@ async function restartApp() {
   fd.append('db_path',           dbPath);
   fd.append('anthropic_api_key', apiKey);
   fd.append('anthropic_model',   antModel);
+  fd.append('openai_api_key',    openaiKey);
+  fd.append('openai_model',      openaiMod);
+  fd.append('gemini_api_key',    geminiKey);
+  fd.append('gemini_model',      geminiMod);
   fd.append('ollama_base_url',   ollamaU);
   fd.append('ollama_model',      model);
   fd.append('ollama_timeout',    timeout);

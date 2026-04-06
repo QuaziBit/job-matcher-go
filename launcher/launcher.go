@@ -92,22 +92,28 @@ func (l *Launcher) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 // handleHealth returns a JSON health report.
 func (l *Launcher) handleHealth(w http.ResponseWriter, r *http.Request) {
-	dbPath    := r.URL.Query().Get("db_path")
-	ollamaURL := r.URL.Query().Get("ollama_url")
-	apiKey    := r.URL.Query().Get("api_key")
+	dbPath       := r.URL.Query().Get("db_path")
+	ollamaURL    := r.URL.Query().Get("ollama_url")
+	apiKey       := r.URL.Query().Get("api_key")
+	openaiKey    := r.URL.Query().Get("openai_key")
+	geminiKey    := r.URL.Query().Get("gemini_key")
 
 	if dbPath == "" {
 		l.mu.Lock()
 		dbPath    = l.cfg.DBPath
 		ollamaURL = l.cfg.OllamaBaseURL
 		apiKey    = l.cfg.AnthropicAPIKey
+		openaiKey = l.cfg.OpenAIAPIKey
+		geminiKey = l.cfg.GeminiAPIKey
 		l.mu.Unlock()
 	}
-	log.Printf("→ Launcher health check: db=%s ollama=%s key_set=%v", dbPath, ollamaURL, apiKey != "")
+	log.Printf("→ Launcher health check: db=%s ollama=%s anthropic_set=%v openai_set=%v gemini_set=%v",
+		dbPath, ollamaURL, apiKey != "", openaiKey != "", geminiKey != "")
 
-	report := RunAll(dbPath, ollamaURL, apiKey)
-	log.Printf("✓ Health: sqlite=%s ollama=%s anthropic=%s models=%d",
-		report.SQLite.Status, report.Ollama.Status, report.Anthropic.Status, len(report.Models))
+	report := RunAll(dbPath, ollamaURL, apiKey, openaiKey, geminiKey)
+	log.Printf("✓ Health: sqlite=%s ollama=%s anthropic=%s openai=%s gemini=%s models=%d",
+		report.SQLite.Status, report.Ollama.Status, report.Anthropic.Status,
+		report.OpenAI.Status, report.Gemini.Status, len(report.Models))
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(report); err != nil {
@@ -139,6 +145,14 @@ func (l *Launcher) parseConfig(r *http.Request) config.Config {
 	}
 	if v := r.FormValue("anthropic_model"); v != "" {
 		cfg.AnthropicModel = v
+	}
+	cfg.OpenAIAPIKey = r.FormValue("openai_api_key")
+	if v := r.FormValue("openai_model"); v != "" {
+		cfg.OpenAIModel = v
+	}
+	cfg.GeminiAPIKey = r.FormValue("gemini_api_key")
+	if v := r.FormValue("gemini_model"); v != "" {
+		cfg.GeminiModel = v
 	}
 	if v := r.FormValue("ollama_base_url"); v != "" {
 		cfg.OllamaBaseURL = v

@@ -145,6 +145,8 @@ type JobDetailView struct {
 	Resumes          []Resume
 	OllamaModel      string // pre-selected Ollama model (from last analysis or config default)
 	AnthropicModel   string // pre-selected Anthropic model (from last analysis or config default)
+	OpenAIModel      string // pre-selected OpenAI model (from last analysis or config default)
+	GeminiModel      string // pre-selected Gemini model (from last analysis or config default)
 	AnalysisMode     string // kept for backwards compat
 	LastAnalysisMode string // pre-selected mode (from last analysis or config default)
 	TextQuality      JobTextQuality

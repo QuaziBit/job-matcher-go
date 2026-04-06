@@ -77,8 +77,12 @@
           <div class="form-row" style="margin:0 0 10px 0;">
             <label>LLM Provider</label>
             <div class="llm-toggle">
-              <input type="radio" name="provider" id="p-anthropic" value="anthropic"{{if ne .LastProvider "ollama"}} checked{{end}} onchange="updateProviderModelRow()"/>
+              <input type="radio" name="provider" id="p-anthropic" value="anthropic"{{if eq .LastProvider "anthropic"}} checked{{end}} onchange="updateProviderModelRow()"/>
               <label for="p-anthropic">Anthropic</label>
+              <input type="radio" name="provider" id="p-openai" value="openai"{{if eq .LastProvider "openai"}} checked{{end}} onchange="updateProviderModelRow()"/>
+              <label for="p-openai">OpenAI</label>
+              <input type="radio" name="provider" id="p-gemini" value="gemini"{{if eq .LastProvider "gemini"}} checked{{end}} onchange="updateProviderModelRow()"/>
+              <label for="p-gemini">Gemini</label>
               <input type="radio" name="provider" id="p-ollama" value="ollama"{{if eq .LastProvider "ollama"}} checked{{end}} onchange="updateProviderModelRow()"/>
               <label for="p-ollama">Ollama</label>
             </div>
@@ -93,7 +97,8 @@
             <label>Model</label>
             <select id="analyze-cloud-model"
                     data-anthropic="{{.AnthropicModel}}"
-                    data-openai="" data-gemini="">
+                    data-openai="{{.OpenAIModel}}"
+                    data-gemini="{{.GeminiModel}}">
               <option value="{{.AnthropicModel}}">{{.AnthropicModel}}</option>
             </select>
           </div>
@@ -118,7 +123,7 @@
         {{else}}
         <span class="text-xs text-dim" style="font-family: var(--font-mono);">
           Salary {{if .SalaryEstimate.Source}}{{.SalaryEstimate.Source}}{{else}}estimate{{end}} cached —
-          <button class="btn-inline-mute" onclick="rerunSalaryEstimate({{.Job.ID}})">re-run</button>
+          <button id="salary-rerun-btn" class="btn-inline-mute" onclick="rerunSalaryEstimate({{.Job.ID}})">re-run</button>
         </span>
         {{end}}
       </div>

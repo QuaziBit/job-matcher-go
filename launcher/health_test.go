@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -204,7 +205,7 @@ func TestRunAll_ReturnsAllThreeResults(t *testing.T) {
 	dbPath := filepath.Join(dir, "test.db")
 	createTestDB(t, dbPath)
 
-	report := RunAll(dbPath, mock.URL, "sk-ant-validkey123")
+	report := RunAll(dbPath, mock.URL, "sk-ant-validkey123", "", "")
 
 	if report.SQLite.Status == "" {
 		t.Error("SQLite result should not be empty")
@@ -226,10 +227,78 @@ func TestRunAll_MissingDBIsWarnNotError(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	report := RunAll("/nonexistent/path/db.sqlite", mock.URL, "")
+	report := RunAll("/nonexistent/path/db.sqlite", mock.URL, "", "", "")
 
 	// Missing DB is a warning (will be created on first start), not a hard error
 	if report.SQLite.Status == StatusError {
 		t.Errorf("missing DB should be warn not error, got %s", report.SQLite.Status)
+	}
+}
+
+// ── CheckOpenAI ───────────────────────────────────────────────────────────────
+
+func TestCheckOpenAI_EmptyKey(t *testing.T) {
+	result := CheckOpenAI("")
+	if result.Status != StatusWarn {
+		t.Errorf("expected warn, got %s", result.Status)
+	}
+}
+
+func TestCheckOpenAI_ValidKey(t *testing.T) {
+	result := CheckOpenAI("sk-proj-validkeyhere1234567890abcdef")
+	if result.Status != StatusOK {
+		t.Errorf("expected ok, got %s: %s", result.Status, result.Message)
+	}
+}
+
+func TestCheckOpenAI_InvalidKeyFormat(t *testing.T) {
+	result := CheckOpenAI("not-a-valid-key")
+	if result.Status != StatusError {
+		t.Errorf("expected error, got %s", result.Status)
+	}
+}
+
+func TestCheckOpenAI_KeyIsMaskedInMessage(t *testing.T) {
+	key := "sk-proj-abcdefghijklmnopqrstuvwxyz"
+	result := CheckOpenAI(key)
+	if result.Status != StatusOK {
+		t.Fatalf("expected ok, got %s", result.Status)
+	}
+	if strings.Contains(result.Message, key) {
+		t.Error("full API key should not appear in health message")
+	}
+}
+
+// ── CheckGemini ───────────────────────────────────────────────────────────────
+
+func TestCheckGemini_EmptyKey(t *testing.T) {
+	result := CheckGemini("")
+	if result.Status != StatusWarn {
+		t.Errorf("expected warn, got %s", result.Status)
+	}
+}
+
+func TestCheckGemini_ValidKey(t *testing.T) {
+	result := CheckGemini("AIzaSyValidKeyHere1234567890abcdef")
+	if result.Status != StatusOK {
+		t.Errorf("expected ok, got %s: %s", result.Status, result.Message)
+	}
+}
+
+func TestCheckGemini_ShortKey(t *testing.T) {
+	result := CheckGemini("short")
+	if result.Status != StatusError {
+		t.Errorf("expected error for short key, got %s", result.Status)
+	}
+}
+
+func TestCheckGemini_KeyIsMaskedInMessage(t *testing.T) {
+	key := "AIzaSyValidKeyHere1234567890abcdef"
+	result := CheckGemini(key)
+	if result.Status != StatusOK {
+		t.Fatalf("expected ok, got %s", result.Status)
+	}
+	if strings.Contains(result.Message, key) {
+		t.Error("full API key should not appear in health message")
 	}
 }

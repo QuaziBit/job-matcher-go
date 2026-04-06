@@ -29,6 +29,8 @@ type HealthReport struct {
 	SQLite    HealthResult   `json:"sqlite"`
 	Ollama    HealthResult   `json:"ollama"`
 	Anthropic HealthResult   `json:"anthropic"`
+	OpenAI    HealthResult   `json:"openai"`
+	Gemini    HealthResult   `json:"gemini"`
 	Models    []string       `json:"models"` // available Ollama models
 }
 
@@ -152,12 +154,36 @@ func CheckAnthropic(apiKey string) HealthResult {
 }
 
 // RunAll runs all health checks and returns the full report.
-func RunAll(dbPath, ollamaURL, anthropicKey string) HealthReport {
+func RunAll(dbPath, ollamaURL, anthropicKey, openaiKey, geminiKey string) HealthReport {
 	ollamaResult, models := CheckOllama(ollamaURL)
 	return HealthReport{
 		SQLite:    CheckSQLite(dbPath),
 		Ollama:    ollamaResult,
 		Anthropic: CheckAnthropic(anthropicKey),
+		OpenAI:    CheckOpenAI(openaiKey),
+		Gemini:    CheckGemini(geminiKey),
 		Models:    models,
 	}
+}
+
+func CheckOpenAI(apiKey string) HealthResult {
+	if apiKey == "" {
+		return HealthResult{Status: StatusWarn, Message: "API key not set — OpenAI provider disabled"}
+	}
+	if len(apiKey) < 20 || !strings.HasPrefix(apiKey, "sk-") {
+		return HealthResult{Status: StatusError, Message: "API key format invalid — expected sk-..."}
+	}
+	masked := apiKey[:7] + "..." + apiKey[len(apiKey)-4:]
+	return HealthResult{Status: StatusOK, Message: fmt.Sprintf("Key present (%s)", masked)}
+}
+
+func CheckGemini(apiKey string) HealthResult {
+	if apiKey == "" {
+		return HealthResult{Status: StatusWarn, Message: "API key not set — Gemini provider disabled"}
+	}
+	if len(apiKey) < 10 {
+		return HealthResult{Status: StatusError, Message: "API key format invalid"}
+	}
+	masked := apiKey[:6] + "..." + apiKey[len(apiKey)-4:]
+	return HealthResult{Status: StatusOK, Message: fmt.Sprintf("Key present (%s)", masked)}
 }

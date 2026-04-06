@@ -269,12 +269,32 @@ func TestHandlerJobsList_InvalidProvider(t *testing.T) {
 	cleanup := setupTestDB(t)
 	defer cleanup()
 
-	errData, status := getJobsListError(t, "provider=openai")
+	errData, status := getJobsListError(t, "provider=badprovider")
 	if status != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", status)
 	}
 	if errData.Error == "" {
 		t.Error("expected non-empty error message")
+	}
+}
+
+func TestHandlerJobsList_OpenAIProviderIsValid(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	_, status := getJobsListError(t, "provider=openai")
+	if status == http.StatusBadRequest {
+		t.Error("expected openai to be a valid provider, got 400")
+	}
+}
+
+func TestHandlerJobsList_GeminiProviderIsValid(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	_, status := getJobsListError(t, "provider=gemini")
+	if status == http.StatusBadRequest {
+		t.Error("expected gemini to be a valid provider, got 400")
 	}
 }
 

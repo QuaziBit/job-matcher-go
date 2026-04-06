@@ -205,6 +205,8 @@ func handleJobDetail(w http.ResponseWriter, r *http.Request) {
 	lastAnalysisMode   := appCfg.AnalysisMode
 	lastOllamaModel    := appCfg.OllamaModel
 	lastAnthropicModel := appCfg.AnthropicModel
+	lastOpenAIModel    := appCfg.OpenAIModel
+	lastGeminiModel    := appCfg.GeminiModel
 	if len(analyses) > 0 {
 		a := analyses[0]
 		lastResumeID = a.ResumeID
@@ -220,6 +222,10 @@ func handleJobDetail(w http.ResponseWriter, r *http.Request) {
 				lastOllamaModel = a.LLMModel
 			case "anthropic":
 				lastAnthropicModel = a.LLMModel
+			case "openai":
+				lastOpenAIModel = a.LLMModel
+			case "gemini":
+				lastGeminiModel = a.LLMModel
 			}
 		}
 	} else if salaryEstimate != nil && salaryEstimate.LLMProvider != "" {
@@ -234,6 +240,8 @@ func handleJobDetail(w http.ResponseWriter, r *http.Request) {
 		Resumes:          resumes,
 		OllamaModel:      lastOllamaModel,
 		AnthropicModel:   lastAnthropicModel,
+		OpenAIModel:      lastOpenAIModel,
+		GeminiModel:      lastGeminiModel,
 		AnalysisMode:     lastAnalysisMode,
 		LastAnalysisMode: lastAnalysisMode,
 		TextQuality:      assessJobTextQuality(job.RawDescription),
@@ -312,10 +320,10 @@ func handleJobsList(w http.ResponseWriter, r *http.Request) {
 
 	// Validate provider
 	provider := q.Get("provider")
-	validProviders := map[string]bool{"": true, "anthropic": true, "ollama": true, "manual": true}
+	validProviders := map[string]bool{"": true, "anthropic": true, "ollama": true, "openai": true, "gemini": true, "manual": true}
 	if !validProviders[provider] {
 		writeError(w, http.StatusBadRequest,
-			fmt.Sprintf("invalid provider %q — must be one of: anthropic, ollama, manual", provider))
+			fmt.Sprintf("invalid provider %q — must be one of: anthropic, openai, gemini, ollama, manual", provider))
 		return
 	}
 
@@ -702,9 +710,14 @@ func handleAnalyzeJob(w http.ResponseWriter, r *http.Request) {
 		if m := r.FormValue("ollama_model"); m != "" {
 			cfg.OllamaModel = m
 		}
-	} else if provider == "anthropic" {
-		if m := r.FormValue("cloud_model"); m != "" {
+	} else if m := r.FormValue("cloud_model"); m != "" {
+		switch provider {
+		case "anthropic":
 			cfg.AnthropicModel = m
+		case "openai":
+			cfg.OpenAIModel = m
+		case "gemini":
+			cfg.GeminiModel = m
 		}
 	}
 

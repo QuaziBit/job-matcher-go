@@ -132,6 +132,10 @@ func callSalaryLLM(prompt, provider string, temperature float64, cfg config.Conf
 	switch provider {
 	case "anthropic":
 		return callSalaryAnthropic(prompt, temperature, cfg)
+	case "openai":
+		return callSalaryOpenAI(prompt, temperature, cfg)
+	case "gemini":
+		return callSalaryGemini(prompt, temperature, cfg)
 	case "ollama":
 		return callSalaryOllama(prompt, temperature, cfg)
 	default:
@@ -189,6 +193,119 @@ func callSalaryAnthropic(prompt string, temperature float64, cfg config.Config) 
 	log.Printf("→ salary anthropic response (%d chars) input_tokens=%d output_tokens=%d",
 		len(result.Content[0].Text), result.Usage.InputTokens, result.Usage.OutputTokens)
 	return result.Content[0].Text, model, nil
+}
+
+func callSalaryOpenAI(prompt string, temperature float64, cfg config.Config) (string, string, error) {
+	if cfg.OpenAIAPIKey == "" {
+		return "", "", fmt.Errorf("OpenAI API key is not set")
+	}
+	model := cfg.OpenAIModel
+	if model == "" {
+		model = "gpt-4o-mini"
+	}
+	log.Printf("→ salary openai request: model=%s temperature=%.1f", model, temperature)
+
+	payload := map[string]interface{}{
+		"model":      model,
+		"max_tokens": 400,
+		"temperature": temperature,
+		"messages":   []map[string]string{{"role": "user", "content": prompt}},
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", model, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+cfg.OpenAIAPIKey)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", model, fmt.Errorf("OpenAI salary request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", model, fmt.Errorf("OpenAI salary API error %d: %s", resp.StatusCode, string(b))
+	}
+	var result struct {
+		Choices []struct {
+			Message struct{ Content string `json:"content"` } `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", model, fmt.Errorf("failed to decode OpenAI salary response: %w", err)
+	}
+	if len(result.Choices) == 0 {
+		return "", model, fmt.Errorf("empty response from OpenAI salary call")
+	}
+	log.Printf("→ salary openai response (%d chars) prompt_tokens=%d completion_tokens=%d",
+		len(result.Choices[0].Message.Content), result.Usage.PromptTokens, result.Usage.CompletionTokens)
+	return result.Choices[0].Message.Content, model, nil
+}
+
+func callSalaryGemini(prompt string, temperature float64, cfg config.Config) (string, string, error) {
+	if cfg.GeminiAPIKey == "" {
+		return "", "", fmt.Errorf("Gemini API key is not set")
+	}
+	model := cfg.GeminiModel
+	if model == "" {
+		model = "gemini-2.5-flash"
+	}
+	log.Printf("→ salary gemini request: model=%s temperature=%.1f", model, temperature)
+
+	type geminiPart struct {
+		Text string `json:"text"`
+	}
+	payload := map[string]interface{}{
+		"contents": []map[string]interface{}{
+			{"role": "user", "parts": []geminiPart{{Text: prompt}}},
+		},
+		"generationConfig": map[string]interface{}{
+			"temperature": temperature,
+		},
+	}
+	body, _ := json.Marshal(payload)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, cfg.GeminiAPIKey)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return "", model, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", model, fmt.Errorf("Gemini salary request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", model, fmt.Errorf("Gemini salary API error %d: %s", resp.StatusCode, string(b))
+	}
+	var result struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", model, fmt.Errorf("failed to decode Gemini salary response: %w", err)
+	}
+	if len(result.Candidates) == 0 || len(result.Candidates[0].Content.Parts) == 0 {
+		return "", model, fmt.Errorf("empty response from Gemini salary call")
+	}
+	text := result.Candidates[0].Content.Parts[0].Text
+	log.Printf("→ salary gemini response (%d chars)", len(text))
+	return text, model, nil
 }
 
 func callSalaryOllama(prompt string, temperature float64, cfg config.Config) (string, string, error) {

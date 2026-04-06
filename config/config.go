@@ -21,6 +21,14 @@ type Config struct {
 	AnthropicAPIKey   string `json:"anthropic_api_key"`
 	AnthropicModel    string `json:"anthropic_model"` // e.g. claude-opus-4-5, claude-sonnet-4-6
 
+	// OpenAI
+	OpenAIAPIKey string `json:"openai_api_key"`
+	OpenAIModel  string `json:"openai_model"` // e.g. gpt-4o-mini, gpt-4o
+
+	// Gemini
+	GeminiAPIKey string `json:"gemini_api_key"`
+	GeminiModel  string `json:"gemini_model"` // e.g. gemini-2.5-flash, gemini-2.5-pro
+
 	// Ollama
 	OllamaBaseURL        string `json:"ollama_base_url"`
 	OllamaModel          string `json:"ollama_model"`
@@ -39,6 +47,10 @@ func Defaults() Config {
 		DBPath:               "job_matcher.db",
 		AnthropicAPIKey:      "",
 		AnthropicModel:       "claude-opus-4-5",
+		OpenAIAPIKey:         "",
+		OpenAIModel:          "gpt-4o-mini",
+		GeminiAPIKey:         "",
+		GeminiModel:          "gemini-2.5-flash",
 		OllamaBaseURL:        "http://localhost:11434",
 		OllamaModel:          "llama3.1:8b",
 		OllamaTimeoutSeconds: 600,
@@ -82,6 +94,12 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.AnthropicModel == "" {
 		cfg.AnthropicModel = "claude-opus-4-5"
+	}
+	if cfg.OpenAIModel == "" {
+		cfg.OpenAIModel = "gpt-4o-mini"
+	}
+	if cfg.GeminiModel == "" {
+		cfg.GeminiModel = "gemini-2.5-flash"
 	}
 	if cfg.OllamaTimeoutSeconds == 0 {
 		cfg.OllamaTimeoutSeconds = 600

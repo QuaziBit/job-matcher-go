@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/QuaziBit/job-matcher-go/config"
 )
 
 // ── parseLLMResponse ──────────────────────────────────────────────────────────
@@ -603,5 +605,51 @@ func TestKeywordBoost_PreservesMinorSeverity(t *testing.T) {
 	}
 	if results[0].Severity != "minor" {
 		t.Errorf("expected 'minor' to be preserved, got %q", results[0].Severity)
+	}
+}
+
+// ── Salary provider dispatch ──────────────────────────────────────────────────
+
+func TestCallSalaryLLM_UnknownProviderReturnsError(t *testing.T) {
+	cfg := config.Defaults()
+	_, _, err := callSalaryLLM("prompt", "unknown_provider", 0.2, cfg)
+	if err == nil {
+		t.Fatal("expected error for unknown provider, got nil")
+	}
+	if !strings.Contains(err.Error(), "unsupported provider") {
+		t.Errorf("expected 'unsupported provider' in error, got: %v", err)
+	}
+}
+
+func TestCallSalaryLLM_OpenAIMissingKeyReturnsError(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.OpenAIAPIKey = ""
+	_, _, err := callSalaryLLM("prompt", "openai", 0.2, cfg)
+	if err == nil {
+		t.Fatal("expected error for missing OpenAI key, got nil")
+	}
+	if !strings.Contains(err.Error(), "OpenAI API key") {
+		t.Errorf("expected key error, got: %v", err)
+	}
+}
+
+func TestCallSalaryLLM_GeminiMissingKeyReturnsError(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.GeminiAPIKey = ""
+	_, _, err := callSalaryLLM("prompt", "gemini", 0.2, cfg)
+	if err == nil {
+		t.Fatal("expected error for missing Gemini key, got nil")
+	}
+	if !strings.Contains(err.Error(), "Gemini API key") {
+		t.Errorf("expected key error, got: %v", err)
+	}
+}
+
+func TestCallSalaryLLM_AnthropicMissingKeyReturnsError(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.AnthropicAPIKey = ""
+	_, _, err := callSalaryLLM("prompt", "anthropic", 0.2, cfg)
+	if err == nil {
+		t.Fatal("expected error for missing Anthropic key, got nil")
 	}
 }

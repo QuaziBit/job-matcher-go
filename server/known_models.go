@@ -16,6 +16,17 @@ var knownModels = map[string][]KnownModel{
 		{ID: "claude-opus-4-5",           Label: "Claude Opus 4.5 · capable"},
 		{ID: "claude-opus-4-6",           Label: "Claude Opus 4.6 · most capable"},
 	},
-	"openai": {},
-	"gemini": {},
+	"openai": {
+		{ID: "gpt-4o-mini",  Label: "gpt-4o-mini  · cheapest"},
+		{ID: "gpt-4o",       Label: "gpt-4o       · balanced"},
+		{ID: "gpt-4-turbo",  Label: "gpt-4-turbo  · powerful"},
+		{ID: "o1-mini",      Label: "o1-mini      · reasoning · cheap"},
+		{ID: "o1",           Label: "o1           · reasoning · expensive"},
+	},
+	"gemini": {
+		{ID: "gemini-2.5-flash",      Label: "gemini-2.5-flash      · cheapest"},
+		{ID: "gemini-2.5-flash-lite", Label: "gemini-2.5-flash-lite · cheapest · fastest"},
+		{ID: "gemini-2.5-pro",        Label: "gemini-2.5-pro        · best · expensive"},
+		{ID: "gemini-2.0-flash",      Label: "gemini-2.0-flash      · fast · cheap"},
+	},
 }

@@ -35,6 +35,14 @@
           <div class="health-icon"></div>
           <div><div class="health-label">Anthropic API</div><div class="health-msg">Checking…</div></div>
         </div>
+        <div id="health-openai" class="health-row loading">
+          <div class="health-icon"></div>
+          <div><div class="health-label">OpenAI API</div><div class="health-msg">Checking…</div></div>
+        </div>
+        <div id="health-gemini" class="health-row loading">
+          <div class="health-icon"></div>
+          <div><div class="health-label">Gemini API</div><div class="health-msg">Checking…</div></div>
+        </div>
       </div>
 
       <div class="section">
@@ -73,6 +81,28 @@
           <label>Anthropic Model</label>
           <input type="text" id="anthropic_model" value="{anthropic_model}"
                  placeholder="claude-opus-4-5"/>
+        </div>
+        <div class="form-row">
+          <label>OpenAI API Key</label>
+          <input type="password" id="openai_api_key" value="{openai_api_key}"
+                 placeholder="sk-proj-..."
+                 oninput="scheduleHealthCheck()"/>
+        </div>
+        <div class="form-row">
+          <label>OpenAI Model</label>
+          <input type="text" id="openai_model" value="{openai_model}"
+                 placeholder="gpt-4o-mini"/>
+        </div>
+        <div class="form-row">
+          <label>Gemini API Key</label>
+          <input type="password" id="gemini_api_key" value="{gemini_api_key}"
+                 placeholder="AIzaSy..."
+                 oninput="scheduleHealthCheck()"/>
+        </div>
+        <div class="form-row">
+          <label>Gemini Model</label>
+          <input type="text" id="gemini_model" value="{gemini_model}"
+                 placeholder="gemini-2.5-flash"/>
         </div>
         <div class="form-row">
           <label>Ollama URL</label>
@@ -164,6 +194,14 @@
               <div class="health-icon"></div>
               <div><div class="health-label">Anthropic API</div><div class="health-msg">Checking…</div></div>
             </div>
+            <div id="h-health-openai" class="health-row loading">
+              <div class="health-icon"></div>
+              <div><div class="health-label">OpenAI API</div><div class="health-msg">Checking…</div></div>
+            </div>
+            <div id="h-health-gemini" class="health-row loading">
+              <div class="health-icon"></div>
+              <div><div class="health-label">Gemini API</div><div class="health-msg">Checking…</div></div>
+            </div>
           </div>
           <div class="section">
             <div class="section-title">Server</div>
@@ -203,6 +241,28 @@
               <label>Anthropic Model</label>
               <input type="text" id="h-anthropic_model" value="{anthropic_model}"
                      placeholder="claude-opus-4-5"/>
+            </div>
+            <div class="form-row">
+              <label>OpenAI API Key</label>
+              <input type="password" id="h-openai_api_key" value="{openai_api_key}"
+                     placeholder="sk-proj-..."
+                     oninput="scheduleHealthCheck()"/>
+            </div>
+            <div class="form-row">
+              <label>OpenAI Model</label>
+              <input type="text" id="h-openai_model" value="{openai_model}"
+                     placeholder="gpt-4o-mini"/>
+            </div>
+            <div class="form-row">
+              <label>Gemini API Key</label>
+              <input type="password" id="h-gemini_api_key" value="{gemini_api_key}"
+                     placeholder="AIzaSy..."
+                     oninput="scheduleHealthCheck()"/>
+            </div>
+            <div class="form-row">
+              <label>Gemini Model</label>
+              <input type="text" id="h-gemini_model" value="{gemini_model}"
+                     placeholder="gemini-2.5-flash"/>
             </div>
             <div class="form-row">
               <label>Ollama URL</label>

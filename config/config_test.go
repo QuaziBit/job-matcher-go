@@ -28,6 +28,12 @@ func TestDefaults(t *testing.T) {
 	if cfg.OllamaTimeoutSeconds != 600 {
 		t.Errorf("expected timeout 600, got %d", cfg.OllamaTimeoutSeconds)
 	}
+	if cfg.OpenAIModel != "gpt-4o-mini" {
+		t.Errorf("expected openai model gpt-4o-mini, got %s", cfg.OpenAIModel)
+	}
+	if cfg.GeminiModel != "gemini-2.5-flash" {
+		t.Errorf("expected gemini model gemini-2.5-flash, got %s", cfg.GeminiModel)
+	}
 }
 
 func TestSaveAndLoad(t *testing.T) {
@@ -96,6 +102,28 @@ func TestLoadCreatedFileIsValidJSON(t *testing.T) {
 	var raw map[string]interface{}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Errorf("created config is not valid JSON: %v", err)
+	}
+}
+
+func TestLoadFillsMissingOpenAIGeminiDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	// Write config without openai/gemini model fields
+	minimal := `{"port": 8000, "host": "127.0.0.1", "db_path": "job_matcher.db"}`
+	if err := os.WriteFile(path, []byte(minimal), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.OpenAIModel != "gpt-4o-mini" {
+		t.Errorf("expected openai default gpt-4o-mini, got %s", cfg.OpenAIModel)
+	}
+	if cfg.GeminiModel != "gemini-2.5-flash" {
+		t.Errorf("expected gemini default gemini-2.5-flash, got %s", cfg.GeminiModel)
 	}
 }
 
