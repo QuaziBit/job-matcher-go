@@ -309,33 +309,61 @@ GitHub Actions will automatically:
 
 ```
 job-matcher-go/
-├── main.go                      Entry point — loads config, starts launcher
+├── main.go                          Entry point — loads config, starts launcher
 ├── config/
-│   └── config.go                Load/save cfg/config.json with defaults
+│   ├── config.go                    Load/save cfg/config.json with defaults
+│   └── config_test.go
 ├── launcher/
-│   ├── launcher.go              Launcher HTTP server — Start/Stop/Restart handlers
-│   ├── health.go                DB / Ollama / Anthropic health checks
-│   └── template.go              Launcher UI (HTML + JS rendered as Go string)
-├── server/
-│   ├── server.go                Main app HTTP server, go:embed, template setup
-│   ├── handlers.go              All HTTP route handlers (pages + API)
-│   ├── analyzer.go              LLM calls (Anthropic + Ollama) + penalty pipeline
-│   ├── scraper.go               URL scraper using golang.org/x/net/html
-│   ├── database.go              SQLite schema + all queries
-│   ├── models.go                Shared structs (Job, Resume, Analysis, etc.)
+│   ├── launcher.go                  Launcher HTTP server — Start/Stop/Restart handlers
+│   ├── health.go                    SQLite / Ollama / Anthropic / OpenAI / Gemini health checks
+│   ├── template.go                  Injects config values into launcher HTML via strings.Replacer
+│   ├── launcher_test.go
+│   ├── health_test.go
 │   └── embedded/
-│       ├── templates/           HTML templates (go:embed into binary)
+│       ├── launcher.html            Launcher UI — vertical + horizontal layouts
+│       ├── launcher.css
+│       └── launcher.js
+├── server/
+│   ├── server.go                    Main app HTTP server, go:embed, template setup
+│   ├── handlers.go                  All HTTP route handlers (pages + API)
+│   ├── llm.go                       LLM callers — Anthropic, OpenAI, Gemini, Ollama chunked
+│   ├── analyzer_config.go           Mode configs (fast/standard/detailed), model capability map
+│   ├── prompts.go                   System + user prompt builders, chunk prompts
+│   ├── parsers.go                   JSON repair, 5-pass parse loop, chunk parsers
+│   ├── penalties.go                 Penalty pipeline — blocker/major/minor scoring, caps
+│   ├── salary.go                    Salary extraction + estimation (all 4 providers)
+│   ├── scraper.go                   URL scraper, text quality assessment
+│   ├── skills.go                    Skill normalization + category mapping
+│   ├── known_models.go              Static model registry per cloud provider
+│   ├── database.go                  SQLite schema + all queries
+│   ├── models.go                    Shared structs (Job, Resume, Analysis, etc.)
+│   ├── utils.go                     Shared helpers (buildComparison, hasBlocker, etc.)
+│   ├── analyzer_test.go
+│   ├── database_test.go
+│   ├── handlers_test.go
+│   ├── scraper_test.go
+│   ├── skills_test.go
+│   ├── testhelpers_test.go
+│   └── embedded/
+│       ├── templates/
+│       │   ├── base.html            Sidebar layout shell
+│       │   ├── index.html           Job list page with filters and pagination
+│       │   ├── job_detail.html      Analysis, salary, application tracking, description
+│       │   ├── job_preview.html     Scrape preview — edit before saving
+│       │   └── resumes.html         Resume version manager
 │       └── static/
-│           ├── css/style.css    Dark theme, IBM Plex fonts
-│           └── js/app.js        Frontend JS — forms, toasts, tabs, score meters
+│           ├── css/style.css        Dark theme, IBM Plex fonts
+│           └── js/app.js            Frontend JS — forms, toasts, tabs, score meters
 ├── cmd/
-│   └── testrunner/main.go       Pretty test output with [✓] / [X]
-├── Makefile                     Build, test, and run targets
-├── cfg/config.json              Runtime config — auto-created, never committed
-├── config.example.json          Config template showing all available fields
-├── NOTES.md                     Useful Go commands reference
+│   └── testrunner/main.go           Pretty test output with [✓] / [X]
+├── tests_js/
+│   └── test_app.html                Browser-based JS tests (51 tests, no dependencies)
+├── Makefile                         Build, test, and run targets
+├── go.mod
+├── cfg/config.json                  Runtime config — auto-created, never committed
+├── config.example.json              Config template showing all available fields
 └── .github/workflows/
-    └── release.yml              CI: test + cross-compile + attach to GitHub release
+    └── release.yml                  CI: test + cross-compile + attach to GitHub release
 ```
 
 ---
@@ -400,20 +428,6 @@ go vet ./...               # catch common mistakes
 
 ---
 
-## Extra Styles
-
-The `extra-styles` folder contains alternative UI style variants for reference:
-
-- `job-matcher-go-evidence-fix-category-grouping.zip` — matched skills grouped
-  by category (BACKEND / FRONTEND / DEVOPS / OTHER) with labeled sections
-- `job-matcher-go-pill-fix-no-category-grouping.zip` — matched skills as a
-  single flat horizontal flow (current default, matches Python version)
-
-To switch variants, replace `server/embedded/static/css/style.css`,
-`server/embedded/static/js/app.js`, and
-`server/embedded/templates/job_detail.html` with the files from the zip.
-
----
 
 **Branch: v3-advanced**
 This branch builds on v2-advanced and adds Analysis Mode (fast / standard /
