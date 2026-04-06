@@ -11,7 +11,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);
   min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
 .card{background:var(--bg2);border:1px solid var(--border);border-radius:6px;
   width:100%;max-width:540px;overflow:hidden;transition:max-width .2s ease;}
-.card--wide{max-width:900px;}
+.card--wide{max-width:920px;}
 .card-header{padding:20px 24px 16px;border-bottom:1px solid var(--border);}
 .header-inner{display:flex;justify-content:space-between;align-items:flex-start;}
 .card-header h1{font-size:18px;font-weight:600;letter-spacing:-0.02em;}
@@ -73,10 +73,11 @@ select option{background:var(--bg3);}
   padding:3px 8px;border:1px solid var(--border);border-radius:var(--radius);}
 .url-link:hover{border-color:var(--amber);color:var(--amber);}
 .hidden{display:none!important;}
-.btn-layout{background:transparent;border:1px solid var(--border);color:var(--text-dim);
+.btn-layout{background:transparent;border:1px solid var(--border);color:var(--text-dim);flex-shrink:0;
   border-radius:var(--radius);padding:4px 10px;font-size:14px;cursor:pointer;
   transition:border-color .15s,color .15s;font-family:var(--mono);line-height:1.4;}
 .btn-layout:hover{border-color:var(--amber);color:var(--amber);}
-.btn-layout--active{border-color:var(--amber);color:var(--amber);}
-.h-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 24px;}
+.btn-layout--active{border-color:var(--amber);color:var(--amber);background:rgba(245,158,11,.08);}
+.h-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;}
 .h-col-full{grid-column:1 / -1;}
+.h-grid > div{min-width:0;}
