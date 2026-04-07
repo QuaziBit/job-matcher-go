@@ -945,7 +945,7 @@ label {
 .req-hard      { background: #7f1d1d; color: #fca5a5; }
 .req-preferred { background: #431407; color: #fdba74; }
 .req-bonus     { background: #1c1f27; color: var(--text-mute); border: 1px solid var(--border); }
-.pill-has-badge { padding-left: 0; gap: 4px; }
+.pill-has-badge { padding-left: 4px; gap: 4px; }
 
 /* ── Evidence Snippets ──────────────────────────────────────────────────────── */
 .skill-evidence { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-right: 4px; margin-bottom: 4px; }
