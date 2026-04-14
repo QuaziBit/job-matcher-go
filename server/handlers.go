@@ -95,6 +95,7 @@ func registerRoutes(mux *http.ServeMux, cfg config.Config) {
 	mux.HandleFunc("/api/resumes/", handleResumeActions)
 	mux.HandleFunc("/api/ollama/models", handleOllamaModels)
 	mux.HandleFunc("/api/providers/models", handleProviderModels)
+	mux.HandleFunc("/api/providers/status", handleProvidersStatus)
 	mux.HandleFunc("/shutdown", handleShutdown)
 }
 
@@ -648,6 +649,11 @@ func handleJobActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.Method == http.MethodGet && strings.HasSuffix(path, "/detail") {
+		handleJobDetail_API(w, r)
+		return
+	}
+
 	if r.Method == http.MethodGet && strings.HasSuffix(path, "/description") {
 		id, err := parseIDFromPath(path, "/api/jobs/")
 		if err != nil {
@@ -974,6 +980,11 @@ func handleAddResume(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleResumeActions(w http.ResponseWriter, r *http.Request) {
+	// GET /api/resumes/ — list all resumes (shared UI endpoint)
+	if r.Method == http.MethodGet && r.URL.Path == "/api/resumes/" {
+		handleResumesList(w, r)
+		return
+	}
 	if r.Method != http.MethodDelete {
 		writeError(w, http.StatusMethodNotAllowed, "DELETE required")
 		return
@@ -989,6 +1000,176 @@ func handleResumeActions(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("✓ Resume deleted id=%d", id)
 	writeJSON(w, http.StatusOK, APIOK{OK: true})
+}
+
+
+// ── New v5 API endpoints ──────────────────────────────────────────────────────
+
+// handleJobDetail_API serves GET /api/jobs/{id}/detail — returns all job
+// detail page data as JSON so the shared static UI can render client-side.
+func handleJobDetail_API(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	id, err := parseIDFromPath(r.URL.Path, "/api/jobs/")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	job, err := dbGetJobByID(id)
+	if err != nil {
+		log.Printf("✗ dbGetJobByID(%d) error: %v", id, err)
+		http.Error(w, "failed to load job", http.StatusInternalServerError)
+		return
+	}
+	if job == nil {
+		http.NotFound(w, r)
+		return
+	}
+	app, err := dbGetApplicationByJobID(id)
+	if err != nil {
+		log.Printf("✗ dbGetApplicationByJobID(%d) error: %v", id, err)
+	}
+	if app == nil {
+		app = &Application{JobID: id, Status: "not_applied"}
+	}
+	analyses, err := dbGetAnalysesByJobID(id)
+	if err != nil {
+		log.Printf("✗ dbGetAnalysesByJobID(%d) error: %v", id, err)
+	}
+	if analyses == nil {
+		analyses = []Analysis{}
+	}
+	resumes, err := dbGetResumes()
+	if err != nil {
+		log.Printf("✗ dbGetResumes error (job detail api): %v", err)
+	}
+	if resumes == nil {
+		resumes = []Resume{}
+	}
+	var salaryEstimate *SalaryEstimate
+	if rawSalary, err := dbGetJobSalaryEstimate(id); err != nil {
+		log.Printf("✗ dbGetJobSalaryEstimate(%d) error: %v", id, err)
+	} else if rawSalary != "" {
+		var se SalaryEstimate
+		if err := json.Unmarshal([]byte(rawSalary), &se); err == nil {
+			salaryEstimate = &se
+		}
+	}
+
+	// Derive last-used resume, provider, model, and mode from the most recent analysis.
+	var lastResumeID    int64
+	lastProvider       := "anthropic"
+	lastAnalysisMode   := appCfg.AnalysisMode
+	lastOllamaModel    := appCfg.OllamaModel
+	lastAnthropicModel := appCfg.AnthropicModel
+	lastOpenAIModel    := appCfg.OpenAIModel
+	lastGeminiModel    := appCfg.GeminiModel
+	if len(analyses) > 0 {
+		a := analyses[0]
+		lastResumeID = a.ResumeID
+		if a.LLMProvider != "" {
+			lastProvider = a.LLMProvider
+		}
+		if a.AnalysisMode != "" {
+			lastAnalysisMode = a.AnalysisMode
+		}
+		if a.LLMModel != "" {
+			switch lastProvider {
+			case "ollama":
+				lastOllamaModel = a.LLMModel
+			case "anthropic":
+				lastAnthropicModel = a.LLMModel
+			case "openai":
+				lastOpenAIModel = a.LLMModel
+			case "gemini":
+				lastGeminiModel = a.LLMModel
+			}
+		}
+	} else if salaryEstimate != nil && salaryEstimate.LLMProvider != "" {
+		lastProvider = salaryEstimate.LLMProvider
+	}
+
+	comp := buildComparison(analyses)
+	var compJSON *ResumeComparisonJSON
+	if comp != nil {
+		compJSON = &ResumeComparisonJSON{
+			ResumeA:      comp.ResumeA,
+			ResumeB:      comp.ResumeB,
+			BetterFit:    comp.BetterFit,
+			BetterReason: comp.BetterReason,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, JobDetailAPIResponse{
+		Job:            *job,
+		Application:    *app,
+		Analyses:       analyses,
+		Resumes:        resumes,
+		SalaryEstimate: salaryEstimate,
+		TextQuality:    assessJobTextQuality(job.RawDescription),
+		Comparison:     compJSON,
+		LastResumeID:   lastResumeID,
+		LastProvider:   lastProvider,
+		AnalysisMode:   lastAnalysisMode,
+		OllamaModel:    lastOllamaModel,
+		AnthropicModel: lastAnthropicModel,
+		OpenAIModel:    lastOpenAIModel,
+		GeminiModel:    lastGeminiModel,
+		HasSalaryInJD:  jobHasSalary(job.RawDescription),
+	})
+}
+
+// handleProvidersStatus serves GET /api/providers/status — returns which
+// LLM providers are configured/reachable and their default models.
+func handleProvidersStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	// Derive default provider — first configured key wins, fallback to ollama
+	defaultProvider := "ollama"
+	switch {
+	case appCfg.AnthropicAPIKey != "":
+		defaultProvider = "anthropic"
+	case appCfg.OpenAIAPIKey != "":
+		defaultProvider = "openai"
+	case appCfg.GeminiAPIKey != "":
+		defaultProvider = "gemini"
+	}
+	writeJSON(w, http.StatusOK, ProvidersStatusResponse{
+		HasAnthropic:    appCfg.AnthropicAPIKey != "",
+		HasOpenAI:       appCfg.OpenAIAPIKey != "",
+		HasGemini:       appCfg.GeminiAPIKey != "",
+		HasOllama:       ollamaAvailable(),
+		DefaultProvider: defaultProvider,
+		DefaultModels: map[string]string{
+			"anthropic": appCfg.AnthropicModel,
+			"openai":    appCfg.OpenAIModel,
+			"gemini":    appCfg.GeminiModel,
+			"ollama":    appCfg.OllamaModel,
+		},
+	})
+}
+
+// handleResumesList serves GET /api/resumes/ — returns all saved resumes as JSON.
+func handleResumesList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	resumes, err := dbGetResumes()
+	if err != nil {
+		log.Printf("✗ dbGetResumes error (api): %v", err)
+		http.Error(w, "failed to load resumes", http.StatusInternalServerError)
+		return
+	}
+	if resumes == nil {
+		resumes = []Resume{}
+	}
+	log.Printf("→ /api/resumes/ returned %d resumes", len(resumes))
+	writeJSON(w, http.StatusOK, map[string]interface{}{"resumes": resumes})
 }
 
 // ── Template view helpers ─────────────────────────────────────────────────────
