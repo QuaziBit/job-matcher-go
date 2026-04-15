@@ -2,491 +2,700 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>app.js Test Suite</title>
+  <title>app.js — Unit Tests</title>
   <style>
-    body { font-family: monospace; padding: 1rem 2rem; background: #111; color: #ccc; }
-    h1   { color: #fff; margin-bottom: 0.25rem; }
-    p.subtitle { color: #888; margin: 0 0 1.5rem; font-size: 0.9rem; }
-    .summary { font-size: 1.1rem; font-weight: bold; margin-bottom: 1rem; }
-    .pass { color: #4ade80; }
-    .fail { color: #f87171; }
-    .section { margin-top: 1.25rem; color: #a78bfa; font-weight: bold; }
-    .result { padding: 0.1rem 0; }
-    #results { max-width: 860px; }
+    body        { font-family: monospace; background: #1a1a1a; color: #ccc; padding: 24px; }
+    h1          { color: #fff; font-size: 1.1em; margin-bottom: 16px; }
+    .section    { color: #64b5f6; font-weight: bold; margin: 16px 0 4px; }
+    .pass       { color: #81c784; }
+    .fail       { color: #e57373; }
+    .summary    { margin-top: 20px; font-weight: bold; font-size: 1.05em; }
+    .summary.ok { color: #81c784; }
+    .summary.ko { color: #e57373; }
+
+    /* Minimal DOM stubs so app.js loads without errors */
+    #toast, #jobs-list, #jobs-loading, #jobs-error, #jobs-error-text,
+    #no-results, #empty-state, #pagination-bar, #pagination-info,
+    #page-indicator, #prev-btn, #next-btn,
+    #analysis-progress, #progress-label, #progress-fill, #progress-meta,
+    #filter-search, #filter-status, #filter-score, #filter-provider
+    { display: none; }
   </style>
 </head>
 <body>
 
-<h1>app.js Test Suite</h1>
-<p class="subtitle">Open directly in a browser — no server required.</p>
-<div class="summary" id="summary">Running…</div>
-<div id="results"></div>
-
-<!-- ── DOM stubs ─────────────────────────────────────────────────────────── -->
-<!-- Hidden stubs so app.js initialises without errors on DOMContentLoaded.  -->
-<!-- Select stubs need real <option> values for .value assignment to work.   -->
-<div style="display:none" id="stubs">
-  <div id="toast"></div>
-  <div id="jobs-list"></div>
-  <div id="no-results" class="hidden"></div>
-  <div id="empty-state" class="hidden"></div>
-  <div id="pagination-bar" style="display:none"></div>
-  <div id="pagination-info"></div>
-  <div id="page-indicator"></div>
+<!-- ── Minimal DOM stubs required by app.js ─────────────────────────────── -->
+<div id="toast"></div>
+<div id="jobs-list"></div>
+<div id="jobs-loading"></div>
+<div id="jobs-error"><span id="jobs-error-text"></span></div>
+<div id="no-results"></div>
+<div id="empty-state"></div>
+<div id="pagination-bar">
+  <span id="pagination-info"></span>
+  <span id="page-indicator"></span>
   <button id="prev-btn"></button>
   <button id="next-btn"></button>
-  <div id="jobs-loading" style="display:none"></div>
-  <div id="jobs-error" class="hidden"><span id="jobs-error-text"></span></div>
-  <input  id="filter-search"   value="">
-  <select id="filter-status">
-    <option value=""></option>
-    <option value="applied">applied</option>
-    <option value="interviewing">interviewing</option>
-  </select>
-  <select id="filter-score">
-    <option value=""></option>
-    <option value="3">3</option>
-    <option value="4">4</option>
-  </select>
-  <select id="filter-provider">
-    <option value=""></option>
-    <option value="anthropic">anthropic</option>
-    <option value="ollama">ollama</option>
-  </select>
-  <select id="filter-date">
-    <option value=""></option>
-    <option value="7">7</option>
-    <option value="30">30</option>
-  </select>
-  <input  id="filter-date-from" value="">
-  <input  id="filter-date-to"   value="">
-  <select id="per-page">
-    <option value="25">25</option>
-    <option value="50">50</option>
-  </select>
-  <div id="clear-btn" style="display:none"></div>
-  <div id="search-clear-btn" style="display:none"></div>
 </div>
+<div id="analysis-progress">
+  <span id="progress-label"></span>
+  <div  id="progress-fill"></div>
+  <span id="progress-meta"></span>
+</div>
+<input id="filter-search"    type="text"   value="">
+<input id="filter-date"      type="text"   value="" style="display:none">
+<input id="filter-date-from" type="text"   value="" style="display:none">
+<input id="filter-date-to"   type="text"   value="" style="display:none">
+<select id="filter-status">
+  <option value=""></option>
+  <option value="applied">applied</option>
+  <option value="interviewing">interviewing</option>
+</select>
+<select id="filter-score">
+  <option value=""></option>
+  <option value="3">3</option>
+  <option value="4">4</option>
+</select>
+<select id="filter-provider">
+  <option value=""></option>
+  <option value="anthropic">anthropic</option>
+  <option value="ollama">ollama</option>
+</select>
 
-<script src="../server/embedded/static/js/app.js"></script>
+<!-- ── Load app.js ──────────────────────────────────────────────────────── -->
+<script src="../assets/ui/static/js/app.js"></script>
+
+<!-- ── Test runner ──────────────────────────────────────────────────────── -->
 <script>
-// ── Test runner ───────────────────────────────────────────────────────────────
+"use strict";
 
-let _passed = 0;
-let _failed = 0;
-let _section = '';
+// ── Runner ────────────────────────────────────────────────────────────────────
 
-const out = document.getElementById('results');
+const output = [];
+let _passed = 0, _failed = 0;
 
 function section(name) {
-  _section = name;
-  const h = document.createElement('div');
-  h.className = 'section';
-  h.textContent = `── ${name}`;
-  out.appendChild(h);
+  output.push({ type: "section", name });
+  console.log(`\n── ${name}`);
 }
 
 function test(name, fn) {
   try {
     fn();
     _passed++;
-    const el = document.createElement('div');
-    el.className = 'result pass';
-    el.textContent = `✓ ${name}`;
-    out.appendChild(el);
-    console.log(`✓ ${_section} › ${name}`);
+    output.push({ type: "pass", name });
+    console.log(`  ✓ ${name}`);
   } catch(e) {
     _failed++;
-    const el = document.createElement('div');
-    el.className = 'result fail';
-    el.textContent = `✗ ${name}: ${e.message}`;
-    out.appendChild(el);
-    console.error(`✗ ${_section} › ${name}:`, e.message);
+    output.push({ type: "fail", name, msg: e.message });
+    console.error(`  ✗ ${name} — ${e.message}`);
   }
 }
 
 function assert(condition, msg) {
-  if (!condition) throw new Error(msg || 'assertion failed');
+  if (!condition) throw new Error(msg || "assertion failed");
 }
-
 function assertEqual(a, b) {
   if (a !== b) throw new Error(`expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
 }
-
 function assertContains(str, sub) {
-  if (!str.includes(sub)) throw new Error(`expected ${JSON.stringify(str)} to contain ${JSON.stringify(sub)}`);
+  if (!str.includes(sub)) throw new Error(`expected string to contain "${sub}"\ngot: ${str.slice(0,300)}`);
 }
-
+function assertNotContains(str, sub) {
+  if (str.includes(sub)) throw new Error(`expected string NOT to contain "${sub}"`);
+}
 function assertClass(el, cls) {
-  if (!el.classList.contains(cls)) throw new Error(`expected element to have class "${cls}"`);
+  if (!el.classList.contains(cls)) throw new Error(`expected element to have class "${cls}", got "${el.className}"`);
 }
-
 function assertNotClass(el, cls) {
   if (el.classList.contains(cls)) throw new Error(`expected element NOT to have class "${cls}"`);
 }
-
-// ── Helper: reset filter inputs ───────────────────────────────────────────────
-function resetFilters() {
-  ['filter-search','filter-status','filter-score','filter-provider',
-   'filter-date','filter-date-from','filter-date-to'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = '';
-  });
+function parseHTML(html) {
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  return div;
 }
 
-// ── Helper: make a minimal job object ────────────────────────────────────────
-function makeJob(overrides) {
-  return Object.assign({
-    id: 1, title: 'Test Job', company: 'Acme', location: 'Remote',
-    url: 'https://example.com/job/1', status: 'not_applied',
-    adjusted_score: 4, best_score: 4, provider: 'anthropic',
-    last_model: 'claude-opus-4-5', scraped_at: null,
-    has_recruiter: false,
-  }, overrides);
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── Utility functions
+// ════════════════════════════════════════════════════════════════════════════
+
+section("escHtml");
+
+test("escapes ampersand",        () => assertContains(escHtml("a&b"),    "&amp;"));
+test("escapes less-than",        () => assertContains(escHtml("a<b"),    "&lt;"));
+test("escapes greater-than",     () => assertContains(escHtml("a>b"),    "&gt;"));
+test("escapes double quote",     () => assertContains(escHtml('a"b'),    "&quot;"));
+test("escapes single quote",     () => assertContains(escHtml("a'b"),    "&#39;"));
+test("leaves safe string alone", () => assertEqual(escHtml("hello"),     "hello"));
+test("handles null",             () => assertEqual(escHtml(null),        ""));
+test("handles number",           () => assertEqual(escHtml(42),          "42"));
+test("escapes XSS payload",      () => { const o = escHtml('<script>alert("xss")</sc' + 'ript>'); assertNotContains(o, "<script>"); assertContains(o, "&lt;script&gt;"); });
+
+
+section("formatElapsed");
+
+test("0 seconds",             () => assertEqual(formatElapsed(0),    "0s"));
+test("45 seconds",            () => assertEqual(formatElapsed(45),   "45s"));
+test("59 seconds",            () => assertEqual(formatElapsed(59),   "59s"));
+test("60 seconds = 1:00",     () => assertEqual(formatElapsed(60),   "1:00"));
+test("90 seconds = 1:30",     () => assertEqual(formatElapsed(90),   "1:30"));
+test("61 seconds = 1:01",     () => assertEqual(formatElapsed(61),   "1:01"));
+test("pads single-digit secs",() => assertEqual(formatElapsed(65),   "1:05"));
+test("3600 seconds = 60:00",  () => assertEqual(formatElapsed(3600), "60:00"));
+
+
+section("formatDuration");
+
+test("0 returns empty",          () => assertEqual(formatDuration(0),   ""));
+test("null returns empty",        () => assertEqual(formatDuration(null),""));
+test("30 seconds",                () => assertEqual(formatDuration(30),  "30s"));
+test("60 seconds = 1m",           () => assertEqual(formatDuration(60),  "1m"));
+test("90 seconds = 1m 30s",       () => assertEqual(formatDuration(90),  "1m 30s"));
+test("120 seconds = 2m",          () => assertEqual(formatDuration(120), "2m"));
+test("rounds to nearest second",  () => assertEqual(formatDuration(30.4),"30s"));
+
+
+section("getLocationFlag");
+
+test("remote keyword",           () => assertEqual(getLocationFlag("Remote"),          "REMOTE"));
+test("Canada city",              () => assertEqual(getLocationFlag("Toronto, ON"),     "CA"));
+test("UK city",                  () => assertEqual(getLocationFlag("London, UK"),      "UK"));
+test("Germany city",             () => assertEqual(getLocationFlag("Berlin, Germany"), "DE"));
+test("USA explicit",             () => assertEqual(getLocationFlag("United States"),   "US"));
+test("unknown defaults to US",   () => assertEqual(getLocationFlag("Springfield"),     "US"));
+test("numeric-only returns N/A", () => assertEqual(getLocationFlag("12345"),           "N/A"));
+test("empty string returns N/A", () => assertEqual(getLocationFlag(""),                "N/A"));
+test("null returns N/A",         () => assertEqual(getLocationFlag(null),              "N/A"));
+test("Singapore",                () => assertEqual(getLocationFlag("Singapore"),       "SG"));
+
+
+section("formatJobDate");
+
+test("empty string returns empty",       () => assertEqual(formatJobDate(""), ""));
+test("null returns empty",               () => assertEqual(formatJobDate(null), ""));
+test("returns non-empty for valid date", () => { const o = formatJobDate("2024-06-15 12:00:00"); assert(o.length > 0); assertContains(o, "Jun"); });
+test("includes year for old date",       () => assertContains(formatJobDate("2020-06-15 12:00:00"), "2020"));
+
+
+section("log / logErr");
+
+test("log does not throw",    () => log("test", "message", { extra: 1 }));
+test("logErr does not throw", () => logErr("test", "error",  new Error("oops")));
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── TMPL — Primitives
+// ════════════════════════════════════════════════════════════════════════════
+
+section("TMPL.spinner");
+
+test("no label — contains spinner span",   () => assertContains(TMPL.spinner(), 'class="spinner"'));
+test("with label — contains label text",   () => assertContains(TMPL.spinner("Loading…"), "Loading"));
+test("with label — contains spinner span", () => assertContains(TMPL.spinner("Loading…"), 'class="spinner"'));
+test("no label — clean output",            () => assertEqual(TMPL.spinner().trim(), '<span class="spinner"></span>'));
+
+
+section("TMPL.spinnerSm");
+
+test("contains size styles",          () => { assertContains(TMPL.spinnerSm(), "width:10px"); assertContains(TMPL.spinnerSm(), "height:10px"); });
+test("with label — appends label",    () => assertContains(TMPL.spinnerSm("saving…"), "saving"));
+test("no label — no undefined text",  () => assertNotContains(TMPL.spinnerSm(), "undefined"));
+
+
+section("TMPL.emptyPanel");
+
+test("wraps message in .empty div",  () => assertContains(TMPL.emptyPanel("No results"), 'class="empty"'));
+test("contains message text",        () => assertContains(TMPL.emptyPanel("No results"), "No results"));
+test("escapes HTML in message",      () => assertContains(TMPL.emptyPanel("<b>bad</b>"),  "&lt;b&gt;"));
+
+
+section("TMPL.snippetToggle");
+
+test("open=true returns down arrow",  () => { const h = TMPL.snippetToggle(true); assert(h.includes("&#9660;") || h.includes("▼"), `missing down arrow in: ${h}`); });
+test("open=false returns right arrow",() => { const h = TMPL.snippetToggle(false); assert(h.includes("&#9658;") || h.includes("►"), `missing right arrow in: ${h}`); });
+test("open and closed differ",        () => assert(TMPL.snippetToggle(true) !== TMPL.snippetToggle(false)));
+
+
+section("TMPL.saveBtn / rerunBtn / salaryBtn");
+
+test("saveBtn returns 'Save'",          () => assertEqual(TMPL.saveBtn(),  "Save"));
+test("rerunBtn returns 're-run'",       () => assertEqual(TMPL.rerunBtn(), "re-run"));
+test("salaryBtn contains money emoji",  () => assertContains(TMPL.salaryBtn(), "💰"));
+test("salaryBtn contains 'Estimate'",   () => assertContains(TMPL.salaryBtn(), "Estimate"));
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── TMPL — Shared components
+// ════════════════════════════════════════════════════════════════════════════
+
+section("TMPL.tqWarning");
+
+test("returns empty for null",         () => assertEqual(TMPL.tqWarning(null), ""));
+test("returns empty for level=ok",     () => assertEqual(TMPL.tqWarning({ level: "ok" }), ""));
+test("returns empty for no level",     () => assertEqual(TMPL.tqWarning({}), ""));
+test("renders for level=low",          () => assertContains(TMPL.tqWarning({ level:"low", issues:[], char_count:100, tech_keywords:3 }), "level-low"));
+test("renders issue list items",       () => {
+  const h = TMPL.tqWarning({ level:"low", issues:["Too short","No tech"], char_count:50, tech_keywords:1 });
+  assertContains(h, "Too short"); assertContains(h, "No tech"); assertContains(h, "<li>");
+});
+test("shows char_count",               () => assertContains(TMPL.tqWarning({ level:"low", issues:[], char_count:200, tech_keywords:5 }), "200"));
+test("shows tech_keywords",            () => assertContains(TMPL.tqWarning({ level:"low", issues:[], char_count:0,   tech_keywords:5 }), "5"));
+test("applies style attribute",        () => assertContains(TMPL.tqWarning({ level:"low", issues:[], char_count:0, tech_keywords:0 }, "margin-top:14px;"), "margin-top:14px;"));
+test("escapes HTML in issues",         () => { const h = TMPL.tqWarning({ level:"low", issues:["<script>xss</sc" + "ript>"], char_count:0, tech_keywords:0 }); assertNotContains(h, "<script>"); assertContains(h, "&lt;script&gt;"); });
+
+
+section("TMPL.providerRadio");
+
+test("correct value attribute",        () => assertContains(TMPL.providerRadio("ollama", "Ollama", false), 'value="ollama"'));
+test("correct label text",             () => assertContains(TMPL.providerRadio("ollama", "Ollama", false), "Ollama"));
+test("checked=true adds checked",      () => assertContains(TMPL.providerRadio("anthropic", "Anthropic", true), "checked"));
+test("checked=false no checked attr",  () => assertNotContains(TMPL.providerRadio("openai", "OpenAI", false), "checked"));
+test("id and for are linked",          () => { const h = TMPL.providerRadio("gemini","Gemini",false); assertContains(h,'id="p-gemini"'); assertContains(h,'for="p-gemini"'); });
+
+
+section("TMPL.providerRadios");
+
+test("empty providers returns ''",              () => assertEqual(TMPL.providerRadios({}, "anthropic"), ""));
+test("renders anthropic when available",        () => assertContains(TMPL.providerRadios({ has_anthropic:true }, "anthropic"), "anthropic"));
+test("skips ollama when unavailable",           () => assertNotContains(TMPL.providerRadios({ has_anthropic:true }, "anthropic"), "ollama"));
+test("checks lastProvider radio",               () => { const d = parseHTML(TMPL.providerRadios({ has_anthropic:true, has_ollama:true }, "ollama")); const c = d.querySelector('input[value="ollama"]'); assert(c && c.checked, "ollama should be checked"); });
+test("anthropic checked when lastProvider ''",  () => assertContains(TMPL.providerRadios({ has_anthropic:true }, ""), "checked"));
+
+
+section("TMPL.resumeSelect");
+
+test("empty — shows no-resumes message",  () => assertContains(TMPL.resumeSelect([], null), "No resumes yet"));
+test("empty — link to /resumes",          () => assertContains(TMPL.resumeSelect([], null), "/resumes"));
+test("with resumes — renders select",     () => assertContains(TMPL.resumeSelect([{id:1,label:"v1"}], null), "<select"));
+test("renders option per resume",         () => { const h = TMPL.resumeSelect([{id:1,label:"v1"},{id:2,label:"v2"}],null); assertContains(h,'value="1"'); assertContains(h,'value="2"'); });
+test("marks last_resume_id selected",     () => { const d = parseHTML(TMPL.resumeSelect([{id:1,label:"v1"},{id:2,label:"v2"}],2)); assertEqual(parseInt(d.querySelector("select").value), 2); });
+test("escapes HTML in label",             () => { assertNotContains(TMPL.resumeSelect([{id:1,label:"<bad>"}],null), "<bad>"); assertContains(TMPL.resumeSelect([{id:1,label:"<bad>"}],null), "&lt;bad&gt;"); });
+
+
+section("TMPL.modeOptions");
+
+test("renders 3 options",               () => assertEqual(parseHTML(TMPL.modeOptions("standard")).querySelectorAll("option").length, 3));
+test("fast option exists",              () => assertContains(TMPL.modeOptions("fast"),     'value="fast"'));
+test("standard option exists",          () => assertContains(TMPL.modeOptions("standard"), 'value="standard"'));
+test("detailed option exists",          () => assertContains(TMPL.modeOptions("detailed"), 'value="detailed"'));
+test("selected=fast marks fast",        () => assertEqual(parseHTML(`<select>${TMPL.modeOptions("fast")}</select>`).querySelector("select").value, "fast"));
+test("selected=detailed marks detailed",() => assertEqual(parseHTML(`<select>${TMPL.modeOptions("detailed")}</select>`).querySelector("select").value, "detailed"));
+
+
+section("TMPL.appStatusOptions");
+
+test("renders 5 options",                    () => assertEqual(parseHTML(`<select>${TMPL.appStatusOptions("not_applied")}</select>`).querySelectorAll("option").length, 5));
+test("not_applied option exists",            () => assertContains(TMPL.appStatusOptions("not_applied"), 'value="not_applied"'));
+test("interviewing option exists",           () => assertContains(TMPL.appStatusOptions("interviewing"), 'value="interviewing"'));
+test("current status is selected",           () => assertEqual(parseHTML(`<select>${TMPL.appStatusOptions("interviewing")}</select>`).querySelector("select").value, "interviewing"));
+test("null defaults to not_applied",         () => assertEqual(parseHTML(`<select>${TMPL.appStatusOptions(null)}</select>`).querySelector("select").value, "not_applied"));
+
+
+section("TMPL.salaryAction");
+
+test("null sal — shows Estimate button",       () => assertContains(TMPL.salaryAction(null, 1, false), "Estimate Salary"));
+test("null sal + hasInJd — shows Extract",     () => assertContains(TMPL.salaryAction(null, 1, true),  "Extract"));
+test("null sal — correct onclick job id",      () => assertContains(TMPL.salaryAction(null, 5, false), "estimateSalary(5)"));
+test("with sal — shows cached label",          () => assertContains(TMPL.salaryAction({source:"estimated"}, 1, false), "cached"));
+test("with sal — shows re-run button",         () => assertContains(TMPL.salaryAction({source:"estimated"}, 1, false), "re-run"));
+test("with sal — rerun correct job id",        () => assertContains(TMPL.salaryAction({source:"estimated"}, 7, false), "rerunSalaryEstimate(7)"));
+test("with sal — escapes source",              () => assertNotContains(TMPL.salaryAction({source:"<bad>"}, 1, false), "<bad>"));
+
+
+section("TMPL.salaryBadge");
+
+test("null returns ''",                () => assertEqual(TMPL.salaryBadge(null, 1), ""));
+test("renders salary-badge-wrap",      () => assertContains(TMPL.salaryBadge({min:80000,max:120000,confidence:"high",source:"estimated",llm_provider:"anthropic"}, 1), "salary-badge-wrap"));
+test("shows formatted min",            () => assertContains(TMPL.salaryBadge({min:80000,max:120000,confidence:"high",source:"estimated",llm_provider:"anthropic"}, 1), "80,000"));
+test("shows formatted max",            () => assertContains(TMPL.salaryBadge({min:80000,max:120000,confidence:"high",source:"estimated",llm_provider:"anthropic"}, 1), "120,000"));
+test("posted source shows pin emoji",  () => assertContains(TMPL.salaryBadge({min:100000,max:150000,confidence:"high",source:"posted",llm_provider:"anthropic"}, 1), "📌"));
+test("estimated source shows ~",       () => assertContains(TMPL.salaryBadge({min:1,max:2,confidence:"medium",source:"estimated",llm_provider:"anthropic"}, 1), "~"));
+test("clear button correct job id",    () => assertContains(TMPL.salaryBadge({min:1,max:2,confidence:"low",source:"estimated",llm_provider:"ollama"}, 9), "clearSalaryEstimate(9)"));
+test("shows confidence level",         () => assertContains(TMPL.salaryBadge({min:1,max:2,confidence:"high",source:"estimated",llm_provider:"anthropic"}, 1), "high"));
+test("shows llm_provider",             () => assertContains(TMPL.salaryBadge({min:1,max:2,confidence:"high",source:"estimated",llm_provider:"gemini"}, 1), "gemini"));
+test("shows llm_model when present",   () => assertContains(TMPL.salaryBadge({min:1,max:2,confidence:"high",source:"estimated",llm_provider:"anthropic",llm_model:"claude-3"}, 1), "claude-3"));
+
+
+section("TMPL.jobUrl");
+
+test("null — pasted description",        () => assertContains(TMPL.jobUrl(null), "pasted description"));
+test("manual:// — pasted description",   () => assertContains(TMPL.jobUrl("manual://abc"), "pasted description"));
+test("real url — anchor tag",            () => assertContains(TMPL.jobUrl("https://example.com/job"), "<a "));
+test("real url — href matches",          () => assertContains(TMPL.jobUrl("https://example.com/job"), "https://example.com/job"));
+test("real url — opens in new tab",      () => assertContains(TMPL.jobUrl("https://example.com"), 'target="_blank"'));
+test("real url — View Original text",    () => assertContains(TMPL.jobUrl("https://example.com"), "View Original"));
+
+
+section("TMPL.jobMeta");
+
+test("shows company",                   () => assertContains(TMPL.jobMeta("Acme", ""), "Acme"));
+test("shows location",                  () => assertContains(TMPL.jobMeta("", "Virginia"), "Virginia"));
+test("shows both",                      () => { const h = TMPL.jobMeta("Acme","Virginia"); assertContains(h,"Acme"); assertContains(h,"Virginia"); });
+test("escapes HTML in company",         () => assertNotContains(TMPL.jobMeta("<b>Corp</b>", ""), "<b>"));
+test("escapes HTML in location",        () => assertNotContains(TMPL.jobMeta("", "<b>DC</b>"), "<b>"));
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── TMPL — Jobs list
+// ════════════════════════════════════════════════════════════════════════════
+
+section("TMPL.jobListItem");
+
+const BASE_JOB = { id:42, title:"Python Dev", company:"Acme", location:"DC", status:"applied", url:"https://example.com", is_manual:false, adjusted_score:4, best_score:4, provider:"anthropic", last_model:"claude-3", has_recruiter:false, scraped_at:null };
+
+test("renders anchor with href",        () => assertContains(TMPL.jobListItem(BASE_JOB), '/job/42'));
+test("renders job title",               () => assertContains(TMPL.jobListItem(BASE_JOB), "Python Dev"));
+test("renders company",                 () => assertContains(TMPL.jobListItem(BASE_JOB), "Acme"));
+test("renders score badge",             () => assertContains(TMPL.jobListItem(BASE_JOB), "score-4"));
+test("renders status badge",            () => assertContains(TMPL.jobListItem(BASE_JOB), "status-applied"));
+test("renders scraped source tag",      () => assertContains(TMPL.jobListItem(BASE_JOB), "scraped"));
+test("renders provider/model tag",      () => assertContains(TMPL.jobListItem(BASE_JOB), "anthropic"));
+test("manual job shows manual tag",     () => assertContains(TMPL.jobListItem({...BASE_JOB, url:"manual://x", is_manual:true}), "manual"));
+test("null score shows dash badge",     () => assertContains(TMPL.jobListItem({...BASE_JOB, adjusted_score:null, best_score:null}), "score-none"));
+test("recruiter shows 👤 badge",        () => assertContains(TMPL.jobListItem({...BASE_JOB, has_recruiter:true}), "👤"));
+test("no title falls back to hostname", () => assertContains(TMPL.jobListItem({...BASE_JOB, title:null, url:"https://careers.example.com/job/1"}), "careers.example.com"));
+test("escapes HTML in title",           () => assertNotContains(TMPL.jobListItem({...BASE_JOB, title:"<script>xss</sc" + "ript>"}), "<script>"));
+test("escapes HTML in company",         () => assertNotContains(TMPL.jobListItem({...BASE_JOB, company:"<b>Evil</b>"}), "<b>"));
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── TMPL — Resumes page
+// ════════════════════════════════════════════════════════════════════════════
+
+section("TMPL.resumeCard");
+
+const BASE_RESUME = { id:5, label:"v2 — tailored", created_at:"2024-06-01 12:00:00", char_count:2400 };
+
+test("renders card div",                 () => assertContains(TMPL.resumeCard(BASE_RESUME), 'class="card'));
+test("renders label",                    () => assertContains(TMPL.resumeCard(BASE_RESUME), "v2 — tailored"));
+test("renders char count",               () => assertContains(TMPL.resumeCard(BASE_RESUME), "2400"));
+test("renders date",                     () => assertContains(TMPL.resumeCard(BASE_RESUME), "2024-06-01"));
+test("delete button correct id",         () => assertContains(TMPL.resumeCard(BASE_RESUME), "deleteResumeAndRefresh(5)"));
+test("escapes HTML in label",            () => assertNotContains(TMPL.resumeCard({...BASE_RESUME, label:"<script>xss</sc" + "ript>"}), "<script>"));
+test("uses content.length when char_count null", () => assertContains(TMPL.resumeCard({id:1,label:"v1",created_at:"",char_count:null,content:"x".repeat(300)}), "300"));
+
+
+section("TMPL.resumesEmpty");
+
+test("renders .empty div",           () => assertContains(TMPL.resumesEmpty(), 'class="empty"'));
+test("contains no-resumes message",  () => assertContains(TMPL.resumesEmpty(), "No resumes saved yet"));
+test("contains empty-icon",          () => assertContains(TMPL.resumesEmpty(), "empty-icon"));
+test("is idempotent",                () => assertEqual(TMPL.resumesEmpty(), TMPL.resumesEmpty()));
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── TMPL — Preview page
+// ════════════════════════════════════════════════════════════════════════════
+
+section("TMPL.previewBlockerList / previewTqIssues");
+
+test("blockerList renders one li per keyword",  () => { const h = TMPL.previewBlockerList(["clearance","citizenship"]); assertEqual(parseHTML(h).querySelectorAll("li").length, 2); assertContains(h,"clearance"); });
+test("blockerList escapes HTML",                () => assertNotContains(TMPL.previewBlockerList(["<b>bad</b>"]), "<b>"));
+test("blockerList empty array returns ''",      () => assertEqual(TMPL.previewBlockerList([]), ""));
+test("tqIssues renders one li per issue",       () => assertEqual(parseHTML(TMPL.previewTqIssues(["Too short","No skills"])).querySelectorAll("li").length, 2));
+test("tqIssues escapes HTML",                   () => assertNotContains(TMPL.previewTqIssues(["<script>"]), "<script>"));
+test("tqIssues empty array returns ''",         () => assertEqual(TMPL.previewTqIssues([]), ""));
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── TMPL — Job detail sub-sections
+// ════════════════════════════════════════════════════════════════════════════
+
+section("TMPL.scoreExplainer");
+
+test("renders details element",          () => assertContains(TMPL.scoreExplainer(), "<details"));
+test("renders summary text",             () => assertContains(TMPL.scoreExplainer(), "How are scores calculated"));
+test("renders Blocker row",              () => assertContains(TMPL.scoreExplainer(), "Blocker"));
+test("renders Major row",                () => assertContains(TMPL.scoreExplainer(), "Major"));
+test("renders Minor row",                () => assertContains(TMPL.scoreExplainer(), "Minor"));
+test("renders Count row",                () => assertContains(TMPL.scoreExplainer(), "Count"));
+test("renders score-explainer-table",    () => assertContains(TMPL.scoreExplainer(), "score-explainer-table"));
+test("is idempotent",                    () => assertEqual(TMPL.scoreExplainer(), TMPL.scoreExplainer()));
+
+
+section("TMPL.progressBar");
+
+test("renders analysis-progress id",    () => assertContains(TMPL.progressBar(), 'id="analysis-progress"'));
+test("initially hidden",                () => assertContains(TMPL.progressBar(), "hidden"));
+test("contains progress-fill id",       () => assertContains(TMPL.progressBar(), 'id="progress-fill"'));
+test("contains progress-label id",      () => assertContains(TMPL.progressBar(), 'id="progress-label"'));
+test("is idempotent",                   () => assertEqual(TMPL.progressBar(), TMPL.progressBar()));
+
+
+section("TMPL.cloudModelRow / ollamaModelRow");
+
+const SAMPLE_D = { anthropic_model:"claude-3", openai_model:"gpt-4", gemini_model:"gemini-pro", ollama_model:"llama3.1:8b" };
+
+test("cloudModelRow has correct id",       () => assertContains(TMPL.cloudModelRow(SAMPLE_D), 'id="cloud-model-row"'));
+test("cloudModelRow initially hidden",     () => assertContains(TMPL.cloudModelRow(SAMPLE_D), "display:none"));
+test("cloudModelRow stores anthropic",     () => assertContains(TMPL.cloudModelRow(SAMPLE_D), "claude-3"));
+test("cloudModelRow stores openai",        () => assertContains(TMPL.cloudModelRow(SAMPLE_D), "gpt-4"));
+test("cloudModelRow stores gemini",        () => assertContains(TMPL.cloudModelRow(SAMPLE_D), "gemini-pro"));
+test("ollamaModelRow has correct id",      () => assertContains(TMPL.ollamaModelRow(SAMPLE_D), 'id="ollama-model-row"'));
+test("ollamaModelRow initially hidden",    () => assertContains(TMPL.ollamaModelRow(SAMPLE_D), "display:none"));
+test("ollamaModelRow shows model value",   () => assertContains(TMPL.ollamaModelRow(SAMPLE_D), "llama3.1:8b"));
+test("ollamaModelRow no undefined",        () => assertNotContains(TMPL.ollamaModelRow({}), "undefined"));
+
+
+section("TMPL.compareTabBtn / compareTab");
+
+test("compareTabBtn null returns ''",          () => assertEqual(TMPL.compareTabBtn(null), ""));
+test("compareTabBtn undefined returns ''",     () => assertEqual(TMPL.compareTabBtn(undefined), ""));
+test("compareTabBtn with comp renders button", () => assertContains(TMPL.compareTabBtn({}), "Compare"));
+test("compareTabBtn has data-tab=compare",     () => assertContains(TMPL.compareTabBtn({}), 'data-tab="compare"'));
+
+const COMP = { resume_a:{resume_label:"v1",adjusted_score:4,matched_skills:[],missing_skills:[]}, resume_b:{resume_label:"v2",adjusted_score:3,matched_skills:[],missing_skills:[]}, better_fit:"v1", better_reason:"more skills" };
+
+test("compareTab null returns ''",             () => assertEqual(TMPL.compareTab(null), ""));
+test("compareTab renders compare-panel",       () => assertContains(TMPL.compareTab(COMP), "compare-panel"));
+test("compareTab shows both resume labels",    () => { assertContains(TMPL.compareTab(COMP),"v1"); assertContains(TMPL.compareTab(COMP),"v2"); });
+test("compareTab shows better_reason",         () => assertContains(TMPL.compareTab(COMP), "more skills"));
+test("compareTab escapes HTML in label",       () => { const c = {...COMP, resume_a:{...COMP.resume_a, resume_label:"<script>"}}; assertNotContains(TMPL.compareTab(c), "<script>"); });
+
+
+section("TMPL.pageHeader");
+
+test("renders page-header div",     () => assertContains(TMPL.pageHeader({id:1,title:"Dev"}, "not_applied","not applied","",""), "page-header"));
+test("renders job title",           () => assertContains(TMPL.pageHeader({id:1,title:"Sr Dev"}, "applied","applied","",""), "Sr Dev"));
+test("renders status badge",        () => assertContains(TMPL.pageHeader({id:1,title:"x"}, "applied","applied","",""), "status-applied"));
+test("renders delete button",       () => assertContains(TMPL.pageHeader({id:5,title:"x"}, "not_applied","not applied","",""), "deleteJob(5)"));
+test("renders back link",           () => assertContains(TMPL.pageHeader({id:1,title:"x"}, "not_applied","not applied","",""), "← Back"));
+test("injects urlHtml",             () => assertContains(TMPL.pageHeader({id:1,title:"x"}, "not_applied","not applied","URL_HTML",""), "URL_HTML"));
+test("injects salaryHtml",          () => assertContains(TMPL.pageHeader({id:1,title:"x"}, "not_applied","not applied","","SALARY_HTML"), "SALARY_HTML"));
+test("escapes title",               () => assertNotContains(TMPL.pageHeader({id:1,title:"<b>bad</b>"}, "not_applied","not applied","",""), "<b>"));
+test("untitled fallback",           () => assertContains(TMPL.pageHeader({id:1}, "not_applied","not applied","",""), "Untitled Job"));
+
+
+section("TMPL.applicationTab");
+
+const BASE_APP = { status:"applied", recruiter_name:"Jane", recruiter_email:"j@example.com", recruiter_phone:"555-1234", notes:"Good contact" };
+
+test("renders application tab-content",  () => assertContains(TMPL.applicationTab({id:1}, BASE_APP), 'data-tab-content="application"'));
+test("renders app-status select",        () => assertContains(TMPL.applicationTab({id:1}, BASE_APP), 'id="app-status"'));
+test("renders recruiter name",           () => assertContains(TMPL.applicationTab({id:1}, BASE_APP), "Jane"));
+test("renders recruiter email",          () => assertContains(TMPL.applicationTab({id:1}, BASE_APP), "j@example.com"));
+test("renders recruiter phone",          () => assertContains(TMPL.applicationTab({id:1}, BASE_APP), "555-1234"));
+test("renders notes",                    () => assertContains(TMPL.applicationTab({id:1}, BASE_APP), "Good contact"));
+test("save button correct job id",       () => assertContains(TMPL.applicationTab({id:7}, BASE_APP), "saveApplication(7)"));
+test("escapes HTML in notes",            () => assertNotContains(TMPL.applicationTab({id:1}, {...BASE_APP, notes:"<script>xss</sc" + "ript>"}), "<script>"));
+test("handles empty app object",         () => assert(TMPL.applicationTab({id:1}, {}).length > 0));
+
+
+section("TMPL.descriptionTab");
+
+test("renders description tab-content", () => assertContains(TMPL.descriptionTab({id:1}, {}), 'data-tab-content="description"'));
+test("renders desc-box div",            () => assertContains(TMPL.descriptionTab({id:1}, {}), 'id="desc-box"'));
+test("toggle button correct job id",    () => assertContains(TMPL.descriptionTab({id:3}, {}), "toggleDesc(3)"));
+test("renders tqWarning when present",  () => assertContains(TMPL.descriptionTab({id:1}, {level:"low",issues:["Short"],char_count:50,tech_keywords:1}), "level-low"));
+test("no tqWarning when level ok",      () => assertNotContains(TMPL.descriptionTab({id:1}, {level:"ok"}), "text-quality-warning"));
+
+
+section("TMPL.tabContainer");
+
+test("renders tab-container div",       () => assertContains(TMPL.tabContainer(null,"","","",""), "tab-container"));
+test("renders Analysis tab",            () => assertContains(TMPL.tabContainer(null,"","","",""), "Analysis"));
+test("renders Application tab",         () => assertContains(TMPL.tabContainer(null,"","","",""), "Application"));
+test("renders Job Description tab",     () => assertContains(TMPL.tabContainer(null,"","","",""), "Job Description"));
+test("renders Compare when comp set",   () => assertContains(TMPL.tabContainer({},"","","",""), "Compare"));
+test("no Compare when comp null",       () => assertNotContains(TMPL.tabContainer(null,"","","",""), "Compare"));
+test("injects analysisTabContent",      () => assertContains(TMPL.tabContainer(null,"ANALYSIS_CONTENT","","",""), "ANALYSIS_CONTENT"));
+test("injects applicationTab",          () => assertContains(TMPL.tabContainer(null,"","APP_TAB","",""), "APP_TAB"));
+test("injects descriptionTab",          () => assertContains(TMPL.tabContainer(null,"","","DESC_TAB",""), "DESC_TAB"));
+test("injects compareTab",              () => assertContains(TMPL.tabContainer(null,"","","","CMP_TAB"), "CMP_TAB"));
+
+
+section("TMPL.analysesSection");
+
+test("empty — returns emptyPanel",      () => assertContains(TMPL.analysesSection([]), 'class="empty"'));
+test("with analyses — section title",   () => { const a = {id:1,score:4,adjusted_score:4,llm_provider:"anthropic",resume_label:"v1",created_at:"2024-01-01",matched_skills:[],missing_skills:[],suggestions:[],penalty_breakdown:{}}; assertContains(TMPL.analysesSection([a]), "Past Analyses"); });
+test("with analyses — analysis-block",  () => { const a = {id:2,score:3,adjusted_score:3,llm_provider:"ollama",resume_label:"v2",created_at:"2024-01-01",matched_skills:[],missing_skills:[],suggestions:[],penalty_breakdown:{}}; assertContains(TMPL.analysesSection([a]), "analysis-2"); });
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── TMPL — Analysis block (detailed)
+// ════════════════════════════════════════════════════════════════════════════
+
+section("TMPL.analysisBlock");
+
+const BASE_ANALYSIS = { id:10, score:4, adjusted_score:3, llm_provider:"anthropic", llm_model:"claude-3", resume_label:"v1", created_at:"2024-06-01 12:00:00", duration_seconds:87, analysis_mode:"standard", used_fallback:false, reasoning:"Good fit.", matched_skills:[], missing_skills:[], suggestions:[], penalty_breakdown:{} };
+
+test("renders analysis-block with id",     () => assertContains(TMPL.analysisBlock(BASE_ANALYSIS,0), 'id="analysis-10"'));
+test("renders raw score badge",            () => assertContains(TMPL.analysisBlock(BASE_ANALYSIS,0), "score-4"));
+test("renders adjusted score badge",       () => assertContains(TMPL.analysisBlock(BASE_ANALYSIS,0), "score-3"));
+test("shows score diff",                   () => assertContains(TMPL.analysisBlock(BASE_ANALYSIS,0), "-1"));
+test("no penalty when scores equal",       () => assertContains(TMPL.analysisBlock({...BASE_ANALYSIS,score:4,adjusted_score:4},0), "no penalty"));
+test("renders resume label",               () => assertContains(TMPL.analysisBlock(BASE_ANALYSIS,0), "v1"));
+test("renders provider",                   () => assertContains(TMPL.analysisBlock(BASE_ANALYSIS,0), "anthropic"));
+test("renders model name",                 () => assertContains(TMPL.analysisBlock(BASE_ANALYSIS,0), "claude-3"));
+test("renders duration",                   () => assertContains(TMPL.analysisBlock(BASE_ANALYSIS,0), "1m 27s"));
+test("renders reasoning text",             () => assertContains(TMPL.analysisBlock(BASE_ANALYSIS,0), "Good fit."));
+test("renders delete button",              () => assertContains(TMPL.analysisBlock(BASE_ANALYSIS,0), "deleteAnalysis(10)"));
+test("renders score meter div",            () => assertContains(TMPL.analysisBlock(BASE_ANALYSIS,0), 'id="meter-1"'));
+test("idx shifts meter id",                () => assertContains(TMPL.analysisBlock(BASE_ANALYSIS,2), 'id="meter-3"'));
+test("fallback warning when used",         () => assertContains(TMPL.analysisBlock({...BASE_ANALYSIS,used_fallback:true},0), "analysis-warning"));
+test("no fallback warning when false",     () => assertNotContains(TMPL.analysisBlock(BASE_ANALYSIS,0), "analysis-warning"));
+test("renders matched skills",             () => { const a = {...BASE_ANALYSIS, matched_skills:[{skill:"Python",match_type:"exact",jd_snippet:null}]}; assertContains(TMPL.analysisBlock(a,0),"Python"); assertContains(TMPL.analysisBlock(a,0),"Matched skills"); });
+test("renders missing skills",             () => { const a = {...BASE_ANALYSIS, missing_skills:[{skill:"Go",severity:"major",requirement_type:"required",jd_snippet:null}]}; assertContains(TMPL.analysisBlock(a,0),"Go"); assertContains(TMPL.analysisBlock(a,0),"Missing / gaps"); });
+test("renders suggestions",                () => { const a = {...BASE_ANALYSIS, suggestions:[{title:"Add CI/CD",detail:"Highlight pipelines",job_requirement:"CI/CD"}]}; assertContains(TMPL.analysisBlock(a,0),"Add CI/CD"); assertContains(TMPL.analysisBlock(a,0),"Resume Suggestions"); });
+test("renders score breakdown on penalty", () => { const a = {...BASE_ANALYSIS, missing_skills:[{skill:"K8s",severity:"blocker",requirement_type:"required",jd_snippet:null}], penalty_breakdown:{total_penalty:2}}; assertContains(TMPL.analysisBlock(a,0),"Score Breakdown"); assertContains(TMPL.analysisBlock(a,0),"BLOCKER"); });
+test("escapes HTML in reasoning",          () => assertNotContains(TMPL.analysisBlock({...BASE_ANALYSIS,reasoning:"<script>xss</sc" + "ript>"},0), "<script>"));
+test("escapes HTML in skill names",        () => assertNotContains(TMPL.analysisBlock({...BASE_ANALYSIS,matched_skills:[{skill:"<b>Python</b>",match_type:"exact"}]},0), "<b>Python</b>"));
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── DOM / controller functions
+// ════════════════════════════════════════════════════════════════════════════
+
+section("toast");
+
+test("shows message",      () => { toast("hello", "info");    assertEqual(document.getElementById("toast").textContent, "hello"); });
+test("sets info class",    () => { toast("msg", "info");      assertContains(document.getElementById("toast").className, "info"); });
+test("sets success class", () => { toast("msg", "success");   assertContains(document.getElementById("toast").className, "success"); });
+test("sets error class",   () => { toast("msg", "error");     assertContains(document.getElementById("toast").className, "error"); });
+test("defaults to info",   () => { toast("msg");              assertContains(document.getElementById("toast").className, "info"); });
+
+
+section("renderMeter");
+
+test("renders 5 pips",           () => { const d = document.createElement("div"); renderMeter(3,d); assertEqual(d.querySelectorAll(".score-pip").length, 5); });
+test("score 3 — 3 filled",       () => { const d = document.createElement("div"); renderMeter(3,d); assertEqual(d.querySelectorAll(".filled-3").length, 3); });
+test("score 5 — 5 filled",       () => { const d = document.createElement("div"); renderMeter(5,d); assertEqual(d.querySelectorAll(".filled-5").length, 5); });
+test("score 1 — 1 filled",       () => { const d = document.createElement("div"); renderMeter(1,d); assertEqual(d.querySelectorAll(".filled-1").length, 1); });
+test("clears previous content",  () => { const d = document.createElement("div"); d.innerHTML = "<span>old</span>"; renderMeter(2,d); assertEqual(d.querySelectorAll("span").length, 0); });
+
+
+section("hasActiveFilter");
+
+test("false when all empty",    () => { ["filter-search","filter-status","filter-score","filter-provider"].forEach(id => { document.getElementById(id).value = ""; }); assertEqual(hasActiveFilter(), false); });
+test("true when search set",    () => { document.getElementById("filter-search").value = "python";    assertEqual(hasActiveFilter(), true); document.getElementById("filter-search").value = ""; });
+test("true when status set",    () => { document.getElementById("filter-status").value = "applied";   assertEqual(hasActiveFilter(), true); document.getElementById("filter-status").value = ""; });
+test("true when score set",     () => { document.getElementById("filter-score").value  = "4";         assertEqual(hasActiveFilter(), true); document.getElementById("filter-score").value  = ""; });
+test("true when provider set",  () => { document.getElementById("filter-provider").value = "anthropic"; assertEqual(hasActiveFilter(), true); document.getElementById("filter-provider").value = ""; });
+
+
+section("toggleSnippets");
+
+function makeSnippetDOM(visible) {
+  const wrap = document.createElement("div"), btn = document.createElement("button"), div = document.createElement("div");
+  div.style.display = visible ? "block" : "none";
+  wrap.appendChild(btn); wrap.appendChild(div); document.body.appendChild(wrap);
+  return { wrap, btn, div };
 }
 
-// ── Helper: make pagination data ──────────────────────────────────────────────
-function makePagData(overrides) {
-  return Object.assign({
-    total: 10, jobs: [], page: 1, total_pages: 3, per_page: 5,
-  }, overrides);
+test("shows hidden container",           () => { const {wrap,btn,div} = makeSnippetDOM(false); toggleSnippets(btn); assertEqual(div.style.display,"block");  document.body.removeChild(wrap); });
+test("hides visible container",          () => { const {wrap,btn,div} = makeSnippetDOM(true);  toggleSnippets(btn); assertEqual(div.style.display,"none");   document.body.removeChild(wrap); });
+test("down arrow on expand",             () => { const {wrap,btn}     = makeSnippetDOM(false); toggleSnippets(btn); assertContains(btn.innerHTML,"▼");        document.body.removeChild(wrap); });
+test("right arrow on collapse",          () => { const {wrap,btn}     = makeSnippetDOM(true);  toggleSnippets(btn); assert(btn.innerHTML.includes("&#9658;") || btn.innerHTML.includes("►"), "missing right arrow"); document.body.removeChild(wrap); });
+
+
+section("renderJobs");
+
+function makeJobsDOM() {
+  document.getElementById("jobs-list").style.display = "block";
+  document.getElementById("jobs-list").innerHTML = "";
+  document.getElementById("no-results").classList.add("hidden");
+  document.getElementById("empty-state").classList.add("hidden");
+  document.getElementById("pagination-bar").style.display = "none";
+  ["filter-search","filter-status","filter-score","filter-provider"].forEach(id => { document.getElementById(id).value = ""; });
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// Tests
-// ═════════════════════════════════════════════════════════════════════════════
+const JOB = { id:42, title:"Python Dev", company:"Acme", location:"DC", status:"applied", url:"https://example.com", is_manual:false, adjusted_score:4, best_score:4, provider:"anthropic", has_recruiter:false, scraped_at:null };
 
-// ── log / logErr (2) ──────────────────────────────────────────────────────────
-section('log / logErr');
+test("renders job link",                 () => { makeJobsDOM(); renderJobs({total:1,jobs:[JOB]}); assertEqual(document.getElementById("jobs-list").querySelectorAll("a.job-item").length, 1); });
+test("link href has job id",             () => { makeJobsDOM(); renderJobs({total:1,jobs:[JOB]}); assertContains(document.getElementById("jobs-list").querySelector("a.job-item").href, "/job/42"); });
+test("empty state when no jobs",         () => { makeJobsDOM(); renderJobs({total:0,jobs:[]}); assertNotClass(document.getElementById("empty-state"), "hidden"); });
+test("no-results when filter + no jobs", () => { makeJobsDOM(); document.getElementById("filter-search").value = "xyz"; renderJobs({total:0,jobs:[]}); assertNotClass(document.getElementById("no-results"), "hidden"); document.getElementById("filter-search").value = ""; });
+test("renders score badge",              () => { makeJobsDOM(); renderJobs({total:1,jobs:[JOB]}); assertContains(document.getElementById("jobs-list").innerHTML, "score-4"); });
+test("skips malformed jobs",             () => { makeJobsDOM(); renderJobs({total:2,jobs:[null,JOB]}); assertEqual(document.getElementById("jobs-list").querySelectorAll("a.job-item").length, 1); });
 
-test('log() does not throw', () => {
-  log('test', 'hello', 1, 2, 3);
-});
 
-test('logErr() does not throw', () => {
-  logErr('test', 'something went wrong', new Error('oops'));
-});
+section("renderPagination");
 
-// ── formatElapsed (10) ───────────────────────────────────────────────────────
-section('formatElapsed');
+function makePagDOM() {
+  document.getElementById("pagination-bar").style.display = "none";
+  document.getElementById("pagination-info").textContent  = "";
+  document.getElementById("page-indicator").textContent   = "";
+  document.getElementById("prev-btn").disabled = false;
+  document.getElementById("next-btn").disabled = false;
+  _perPage = 25;
+}
 
-test('0 seconds → "0s"',   () => assertEqual(formatElapsed(0),    '0s'));
-test('1 second  → "1s"',   () => assertEqual(formatElapsed(1),    '1s'));
-test('45 seconds → "45s"', () => assertEqual(formatElapsed(45),   '45s'));
-test('59 seconds → "59s"', () => assertEqual(formatElapsed(59),   '59s'));
-test('60 seconds → "1:00"',() => assertEqual(formatElapsed(60),   '1:00'));
-test('61 seconds → "1:01"',() => assertEqual(formatElapsed(61),   '1:01'));
-test('90 seconds → "1:30"',() => assertEqual(formatElapsed(90),   '1:30'));
-test('120 seconds → "2:00"',() => assertEqual(formatElapsed(120), '2:00'));
-test('125 seconds → "2:05" (zero-padded)',() => assertEqual(formatElapsed(125), '2:05'));
-test('3661 seconds → "61:01"',() => assertEqual(formatElapsed(3661), '61:01'));
+test("shows bar on multiple pages",  () => { makePagDOM(); _perPage=5; renderPagination({page:1,total_pages:3,total:15,per_page:5}); assertEqual(document.getElementById("pagination-bar").style.display,"flex"); });
+test("hides bar on single page",     () => { makePagDOM(); _perPage=25; renderPagination({page:1,total_pages:1,total:5,per_page:25}); assertEqual(document.getElementById("pagination-bar").style.display,"none"); });
+test("disables prev on page 1",      () => { makePagDOM(); _perPage=5; renderPagination({page:1,total_pages:3,total:15,per_page:5}); assertEqual(document.getElementById("prev-btn").disabled,true); });
+test("disables next on last page",   () => { makePagDOM(); _perPage=5; renderPagination({page:3,total_pages:3,total:15,per_page:5}); assertEqual(document.getElementById("next-btn").disabled,true); });
+test("enables prev on page 2+",      () => { makePagDOM(); _perPage=5; renderPagination({page:2,total_pages:3,total:15,per_page:5}); assertEqual(document.getElementById("prev-btn").disabled,false); });
+test("info shows correct range",     () => { makePagDOM(); _perPage=5; renderPagination({page:2,total_pages:3,total:15,per_page:5}); const t=document.getElementById("pagination-info").textContent; assertContains(t,"6"); assertContains(t,"10"); assertContains(t,"15"); });
+test("indicator shows page of total",() => { makePagDOM(); _perPage=5; renderPagination({page:2,total_pages:3,total:15,per_page:5}); const t=document.getElementById("page-indicator").textContent; assertContains(t,"2"); assertContains(t,"3"); });
 
-// ── toast (5) ────────────────────────────────────────────────────────────────
-section('toast');
 
-test('sets message text', () => {
-  toast('Hello world', 'info');
-  const el = document.getElementById('toast');
-  assertEqual(el.textContent, 'Hello world');
-});
+section("saveFilterState");
 
-test('type="info" adds info class', () => {
-  toast('msg', 'info');
-  assertContains(document.getElementById('toast').className, 'info');
-});
-
-test('type="success" adds success class', () => {
-  toast('msg', 'success');
-  assertContains(document.getElementById('toast').className, 'success');
-});
-
-test('type="error" adds error class', () => {
-  toast('msg', 'error');
-  assertContains(document.getElementById('toast').className, 'error');
-});
-
-test('default type is "info"', () => {
-  toast('msg');
-  assertContains(document.getElementById('toast').className, 'info');
-});
-
-// ── renderMeter (5) ──────────────────────────────────────────────────────────
-section('renderMeter');
-
-test('creates exactly 5 pips', () => {
-  const c = document.createElement('div');
-  renderMeter(3, c);
-  assertEqual(c.querySelectorAll('.score-pip').length, 5);
-});
-
-test('score=3 fills 3 pips', () => {
-  const c = document.createElement('div');
-  renderMeter(3, c);
-  assertEqual(c.querySelectorAll('.filled-3').length, 3);
-});
-
-test('score=5 fills 5 pips', () => {
-  const c = document.createElement('div');
-  renderMeter(5, c);
-  assertEqual(c.querySelectorAll('.filled-5').length, 5);
-});
-
-test('score=1 fills 1 pip', () => {
-  const c = document.createElement('div');
-  renderMeter(1, c);
-  assertEqual(c.querySelectorAll('.filled-1').length, 1);
-});
-
-test('clears previous content on re-render', () => {
-  const c = document.createElement('div');
-  renderMeter(2, c);
-  renderMeter(4, c);
-  assertEqual(c.querySelectorAll('.score-pip').length, 5);
-  assertEqual(c.querySelectorAll('.filled-4').length, 4);
-});
-
-// ── hasActiveFilter (5) ──────────────────────────────────────────────────────
-section('hasActiveFilter');
-
-test('all empty → false', () => {
-  resetFilters();
-  assertEqual(hasActiveFilter(), false);
-});
-
-test('search value → true', () => {
-  resetFilters();
-  document.getElementById('filter-search').value = 'react';
-  assertEqual(hasActiveFilter(), true);
-  resetFilters();
-});
-
-test('status value → true', () => {
-  resetFilters();
-  document.getElementById('filter-status').value = 'applied';
-  assertEqual(hasActiveFilter(), true);
-  resetFilters();
-});
-
-test('score value → true', () => {
-  resetFilters();
-  document.getElementById('filter-score').value = '3';
-  assertEqual(hasActiveFilter(), true);
-  resetFilters();
-});
-
-test('provider value → true', () => {
-  resetFilters();
-  document.getElementById('filter-provider').value = 'anthropic';
-  assertEqual(hasActiveFilter(), true);
-  resetFilters();
-});
-
-// ── toggleSnippets (4) ───────────────────────────────────────────────────────
-section('toggleSnippets');
-
-(function() {
-  const btn = document.createElement('button');
-  btn.innerHTML = '&#9658; evidence';
-  const container = document.createElement('div');
-  container.style.display = 'none';
-  document.body.appendChild(btn);
-  document.body.appendChild(container);
-
-  test('hidden container → toggle shows it', () => {
-    toggleSnippets(btn);
-    assertEqual(container.style.display, 'block');
-  });
-
-  test('show → button text changes to ▼ evidence', () => {
-    assertContains(btn.innerHTML, '▼');
-  });
-
-  test('visible container → toggle hides it', () => {
-    toggleSnippets(btn);
-    assertEqual(container.style.display, 'none');
-  });
-
-  test('hide → button text changes to ► evidence', () => {
-    assertContains(btn.innerHTML, '►');
-  });
-
-  document.body.removeChild(btn);
-  document.body.removeChild(container);
-})();
-
-// ── renderJobs (7) ───────────────────────────────────────────────────────────
-section('renderJobs');
-
-// renderJobs calls renderPagination which reads _currentPage/_perPage globals.
-// It also calls saveFilterState on link clicks — those are just event listeners.
-
-test('normal job renders a link element', () => {
-  const data = { total: 1, jobs: [makeJob()], page: 1, total_pages: 1, per_page: 25 };
-  renderJobs(data);
-  const list = document.getElementById('jobs-list');
-  assert(list.querySelector('a.job-item') !== null, 'no .job-item link rendered');
-});
-
-test('job link href is /job/{id}', () => {
-  const data = { total: 1, jobs: [makeJob({ id: 42 })], page: 1, total_pages: 1, per_page: 25 };
-  renderJobs(data);
-  const link = document.getElementById('jobs-list').querySelector('a.job-item');
-  assertEqual(link.getAttribute('href'), '/job/42');
-});
-
-test('total=0 and no filter → shows empty-state', () => {
-  resetFilters();
-  renderJobs({ total: 0, jobs: [], page: 1, total_pages: 1, per_page: 25 });
-  assertNotClass(document.getElementById('empty-state'), 'hidden');
-});
-
-test('jobs array empty with active filter → shows no-results', () => {
-  resetFilters();
-  document.getElementById('filter-search').value = 'xyz';
-  renderJobs({ total: 3, jobs: [], page: 1, total_pages: 1, per_page: 25 });
-  assertNotClass(document.getElementById('no-results'), 'hidden');
-  resetFilters();
-});
-
-test('score badge rendered with correct score class', () => {
-  renderJobs({ total: 1, jobs: [makeJob({ adjusted_score: 4 })], page: 1, total_pages: 1, per_page: 25 });
-  const list = document.getElementById('jobs-list');
-  assert(list.querySelector('.score-4') !== null, 'no .score-4 badge');
-});
-
-test('manual:// URL shows MANUAL tag', () => {
-  renderJobs({ total: 1, jobs: [makeJob({ url: 'manual://abc123', provider: null, last_model: null })], page: 1, total_pages: 1, per_page: 25 });
-  const list = document.getElementById('jobs-list');
-  assertContains(list.innerHTML, 'MANUAL');
-});
-
-test('malformed job (null) is skipped, does not throw', () => {
-  renderJobs({ total: 2, jobs: [null, makeJob({ id: 7 })], page: 1, total_pages: 1, per_page: 25 });
-  const list = document.getElementById('jobs-list');
-  const links = list.querySelectorAll('a.job-item');
-  assertEqual(links.length, 1);
-  assertEqual(links[0].getAttribute('href'), '/job/7');
-});
-
-// ── renderPagination (7) ─────────────────────────────────────────────────────
-section('renderPagination');
-
-test('pagBar visible when total > 0', () => {
-  renderPagination(makePagData({ total: 10, page: 1, total_pages: 3, per_page: 5 }));
-  assertEqual(document.getElementById('pagination-bar').style.display, 'flex');
-});
-
-test('prev-btn disabled on page 1', () => {
-  renderPagination(makePagData({ page: 1 }));
-  assert(document.getElementById('prev-btn').disabled, 'prev-btn should be disabled');
-});
-
-test('next-btn disabled on last page', () => {
-  renderPagination(makePagData({ page: 3, total_pages: 3 }));
-  assert(document.getElementById('next-btn').disabled, 'next-btn should be disabled');
-});
-
-test('prev-btn enabled on page 2', () => {
-  renderPagination(makePagData({ page: 2, total_pages: 3 }));
-  assert(!document.getElementById('prev-btn').disabled, 'prev-btn should be enabled');
-});
-
-test('next-btn enabled before last page', () => {
-  renderPagination(makePagData({ page: 1, total_pages: 3 }));
-  assert(!document.getElementById('next-btn').disabled, 'next-btn should be enabled');
-});
-
-test('info text shows correct range', () => {
-  renderPagination(makePagData({ total: 10, page: 2, total_pages: 2, per_page: 5 }));
-  const info = document.getElementById('pagination-info').textContent;
-  assertContains(info, '6');  // start of page 2
-  assertContains(info, '10'); // end
-});
-
-test('page indicator text on multi-page', () => {
-  renderPagination(makePagData({ page: 2, total_pages: 3 }));
-  const indicator = document.getElementById('page-indicator').textContent;
-  assertContains(indicator, 'Page 2');
-  assertContains(indicator, '3');
-});
-
-// ── saveFilterState (1) ──────────────────────────────────────────────────────
-section('saveFilterState');
-
-test('full sessionStorage roundtrip', () => {
-  resetFilters();
-  document.getElementById('filter-search').value   = 'engineer';
-  document.getElementById('filter-status').value   = 'applied';
-  document.getElementById('filter-score').value    = '4';
-  document.getElementById('filter-provider').value = 'anthropic';
+test("saves all fields to sessionStorage", () => {
+  document.getElementById("filter-search").value   = "python";
+  document.getElementById("filter-status").value   = "applied";
+  document.getElementById("filter-score").value    = "4";
+  document.getElementById("filter-provider").value = "anthropic";
+  _currentPage = 2; _perPage = 10;
   saveFilterState();
-  const saved = JSON.parse(sessionStorage.getItem('jobFilterState'));
-  assertEqual(saved.search,   'engineer');
-  assertEqual(saved.status,   'applied');
-  assertEqual(saved.score,    '4');
-  assertEqual(saved.provider, 'anthropic');
-  resetFilters();
+  const s = JSON.parse(sessionStorage.getItem("jobFilterState"));
+  assertEqual(s.search,"python"); assertEqual(s.status,"applied"); assertEqual(s.score,"4"); assertEqual(s.provider,"anthropic"); assertEqual(s.page,2); assertEqual(s.per_page,10);
+  ["filter-search","filter-status","filter-score","filter-provider"].forEach(id => { document.getElementById(id).value = ""; });
+  sessionStorage.removeItem("jobFilterState");
 });
 
-// ── clearFilters (1) ─────────────────────────────────────────────────────────
-section('clearFilters');
 
-test('clears all filter inputs', () => {
-  document.getElementById('filter-search').value   = 'go dev';
-  document.getElementById('filter-status').value   = 'applied';
-  document.getElementById('filter-score').value    = '3';
-  document.getElementById('filter-provider').value = 'ollama';
-  // clearFilters calls applyFilters → fetchJobs — suppress the network call
-  // by temporarily overriding fetchJobs
-  const origFetch = window.fetchJobs;
-  window.fetchJobs = () => {};
+section("showLoading");
+
+test("shows loading element",        () => { document.getElementById("jobs-loading").style.display="none";  showLoading(true);  assertEqual(document.getElementById("jobs-loading").style.display,"block"); });
+test("hides loading element",        () => { document.getElementById("jobs-loading").style.display="block"; showLoading(false); assertEqual(document.getElementById("jobs-loading").style.display,"none"); });
+test("hides error box on load start",() => { const e=document.getElementById("jobs-error"); e.classList.remove("hidden"); showLoading(true); assertClass(e,"hidden"); });
+test("clears jobs list on load start",() => { const l=document.getElementById("jobs-list"); l.innerHTML="<div>old</div>"; showLoading(true); assertEqual(l.innerHTML,""); });
+
+
+section("clearFilters");
+
+test("clears all filter inputs", () => {
+  document.getElementById("filter-search").value   = "python";
+  document.getElementById("filter-status").value   = "applied";
+  document.getElementById("filter-score").value    = "3";
+  document.getElementById("filter-provider").value = "ollama";
+  const orig = window.fetch;
+  window.fetch = () => Promise.resolve({ok:true,json:()=>Promise.resolve({total:0,jobs:[],total_pages:1,page:1,per_page:25})});
   clearFilters();
-  window.fetchJobs = origFetch;
-  assertEqual(document.getElementById('filter-search').value,   '');
-  assertEqual(document.getElementById('filter-status').value,   '');
-  assertEqual(document.getElementById('filter-score').value,    '');
-  assertEqual(document.getElementById('filter-provider').value, '');
+  window.fetch = orig;
+  assertEqual(document.getElementById("filter-search").value,   "");
+  assertEqual(document.getElementById("filter-status").value,   "");
+  assertEqual(document.getElementById("filter-score").value,    "");
+  assertEqual(document.getElementById("filter-provider").value, "");
 });
 
-// ── showLoading (4) ──────────────────────────────────────────────────────────
-section('showLoading');
 
-test('show=true makes loading visible', () => {
-  showLoading(true);
-  assertEqual(document.getElementById('jobs-loading').style.display, 'block');
-});
-
-test('show=true hides error box', () => {
-  document.getElementById('jobs-error').classList.remove('hidden');
-  showLoading(true);
-  assertClass(document.getElementById('jobs-error'), 'hidden');
-});
-
-test('show=true clears jobs list', () => {
-  document.getElementById('jobs-list').innerHTML = '<a class="job-item">x</a>';
-  showLoading(true);
-  assertEqual(document.getElementById('jobs-list').innerHTML, '');
-});
-
-test('show=false hides loading', () => {
-  showLoading(true);
-  showLoading(false);
-  assert(
-    document.getElementById('jobs-loading').style.display === 'none' ||
-    document.getElementById('jobs-loading').style.display === '',
-    'loading should be hidden'
-  );
-});
-
-// ═════════════════════════════════════════════════════════════════════════════
-// Summary
-// ═════════════════════════════════════════════════════════════════════════════
+// ── Summary ───────────────────────────────────────────────────────────────────
 
 const total = _passed + _failed;
-const summary = document.getElementById('summary');
-summary.textContent = `${_passed}/${total} passed`;
-summary.className   = 'summary ' + (_failed === 0 ? 'pass' : 'fail');
-console.log(`\n${_passed}/${total} tests passed`);
+const summaryMsg = `${total} tests — ${_passed} passed, ${_failed} failed`;
+console.log(`\n${summaryMsg}`);
+
+document.body.insertAdjacentHTML("afterbegin", `
+  <h1>app.js — Unit Tests</h1>
+  <div id="results"></div>
+  <div class="summary ${_failed === 0 ? 'ok' : 'ko'}">${summaryMsg}</div>
+  <hr style="border-color:#333;margin:16px 0">
+`);
+
+const resultsEl = document.getElementById("results");
+output.forEach(item => {
+  if (item.type === "section") {
+    resultsEl.insertAdjacentHTML("beforeend", `<div class="section">── ${item.name}</div>`);
+  } else if (item.type === "pass") {
+    resultsEl.insertAdjacentHTML("beforeend", `<div class="pass">  ✓ ${item.name}</div>`);
+  } else {
+    resultsEl.insertAdjacentHTML("beforeend", `<div class="fail">  ✗ ${item.name} — ${item.msg}</div>`);
+  }
+});
 </script>
 </body>
 </html>

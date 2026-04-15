@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -912,5 +913,182 @@ func TestHandleResumesList_ContentTypeJSON(t *testing.T) {
 	ct := w.Header().Get("Content-Type")
 	if !strings.Contains(ct, "application/json") {
 		t.Errorf("expected Content-Type application/json, got %q", ct)
+	}
+}
+
+// ── Page shell handlers ───────────────────────────────────────────────────────
+
+func TestHandleIndex_ServesHTML(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	handleIndex(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("expected text/html Content-Type, got %q", ct)
+	}
+}
+
+func TestHandleIndex_NotFoundForSubPath(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/notaroute", nil)
+	w := httptest.NewRecorder()
+	handleIndex(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for non-root path, got %d", w.Code)
+	}
+}
+
+func TestHandleResumes_ServesHTML(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/resumes", nil)
+	w := httptest.NewRecorder()
+	handleResumes(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("expected text/html Content-Type, got %q", ct)
+	}
+}
+
+func TestHandleJobPreview_ServesHTML(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs/preview", nil)
+	w := httptest.NewRecorder()
+	handleJobPreview(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("expected text/html Content-Type, got %q", ct)
+	}
+}
+
+func TestHandleJobPreview_WrongMethod(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs/preview", nil)
+	w := httptest.NewRecorder()
+	handleJobPreview(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleJobDetail_ServesHTML(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	jobID, err := dbInsertJob("https://example.com/shell-test", "Shell Test", "Corp", "VA", "Some job description here")
+	if err != nil {
+		t.Fatalf("dbInsertJob failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/job/1", nil)
+	req.URL.Path = "/job/" + strconv.FormatInt(jobID, 10)
+	w := httptest.NewRecorder()
+	handleJobDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("expected text/html Content-Type, got %q", ct)
+	}
+}
+
+func TestHandleJobDetail_NotFoundForMissingJob(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/job/99999", nil)
+	req.URL.Path = "/job/99999"
+	w := httptest.NewRecorder()
+	handleJobDetail(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for missing job, got %d", w.Code)
+	}
+}
+
+// ── handleScrapeJobPreview — URL field in response ───────────────────────────
+
+func TestHandleScrapeJobPreview_IncludesURLInResponse(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Spin up a minimal HTTP server to act as the job page
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><head><title>Go Engineer at Acme</title></head><body>
+			<h1>Go Engineer</h1><p>We need a Go developer with 3+ years of experience
+			building REST APIs, working with PostgreSQL, and deploying to AWS.
+			Strong knowledge of Docker and Kubernetes required.</p></body></html>`)
+	}))
+	defer ts.Close()
+
+	body := strings.NewReader("url=" + ts.URL)
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/scrape", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleScrapeJobPreview(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — body: %s", w.Code, w.Body.String())
+	}
+
+	var resp ScrapePreviewResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.URL != ts.URL {
+		t.Errorf("expected url=%q in response, got %q", ts.URL, resp.URL)
+	}
+}
+
+func TestHandleScrapeJobPreview_MissingURL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("")
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/scrape", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleScrapeJobPreview(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing url, got %d", w.Code)
+	}
+}
+
+func TestHandleSavePreview_MissingURL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("title=Engineer&company=Acme&description=Some+job+description+here")
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/save-preview", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleSavePreview(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 when url missing from save-preview, got %d", w.Code)
 	}
 }

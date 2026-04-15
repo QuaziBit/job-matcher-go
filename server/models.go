@@ -122,6 +122,7 @@ type JobTextQuality struct {
 }
 
 type ScrapePreviewResponse struct {
+	URL             string         `json:"url"`
 	Title           string         `json:"title"`
 	Company         string         `json:"company"`
 	Location        string         `json:"location"`

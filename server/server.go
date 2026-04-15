@@ -4,17 +4,14 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"html/template"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/QuaziBit/job-matcher-go/config"
 )
 
-//go:embed embedded/templates embedded/static
-var embeddedFS embed.FS
+var uiFS embed.FS
 
 // Server wraps the main application HTTP server.
 type Server struct {
@@ -23,21 +20,32 @@ type Server struct {
 }
 
 // New creates a new Server with the given config.
-func New(cfg config.Config) *Server {
+func New(cfg config.Config, fs embed.FS) *Server {
+	uiFS = fs // global injection once
 	return &Server{cfg: cfg}
 }
 
-// parseTemplate parses base.html + the given page template into a fresh set.
-// This prevents define block conflicts across pages (e.g. multiple "title" defines).
-func parseTemplate(name string) (*template.Template, error) {
-	return template.New("").Funcs(templateFuncs()).ParseFS(
-		embeddedFS,
-		"embedded/templates/base.html",
-		"embedded/templates/"+name,
-	)
+// serveUIFile reads a static HTML shell from the embedded ui/ directory
+// and writes it as an HTML response.
+func serveUIFile(w http.ResponseWriter, name string) {
+	data, err := uiFS.ReadFile("ui/" + name)
+
+	// fallback for tests (VERY IMPORTANT)
+	if err != nil {
+		data, err = os.ReadFile("../assets/ui/" + name)
+	}
+
+	if err != nil {
+		log.Printf("✗ UI file not found: %s — %v", name, err)
+		http.Error(w, "page not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
 }
 
-// Start initializes DB, parses templates, registers routes, and begins serving.
+// Start initializes DB, registers routes, and begins serving.
 func (s *Server) Start() error {
 	// Propagate ShowMoreLogs to env so showMoreLogs() helper in llm.go can read it.
 	if s.cfg.ShowMoreLogs {
@@ -83,66 +91,6 @@ func (s *Server) Stop() {
 		}
 	}
 	log.Printf("✓ Server stopped")
-}
-
-// templateFuncs returns custom template functions.
-func templateFuncs() template.FuncMap {
-	return template.FuncMap{
-		"hasPrefix":          strings.HasPrefix,
-		"upper":              strings.ToUpper,
-		"groupMatchedSkills": groupMatchedSkills,
-		"buildClusterLines":  buildClusterLines,
-		"formatDuration": func(s int) string {
-			if s == 0 {
-				return ""
-			}
-			m := s / 60
-			sec := s % 60
-			if m > 0 {
-				return fmt.Sprintf("%d:%02d", m, sec)
-			}
-			return fmt.Sprintf("%ds", sec)
-		},
-		// "empty" checks if a string value is empty — use instead of "not" for strings
-		// since Go's built-in "not" only works on booleans
-		"empty": func(v interface{}) bool {
-			if v == nil {
-				return true
-			}
-			switch val := v.(type) {
-			case string:
-				return val == ""
-			case *int:
-				return val == nil
-			case bool:
-				return !val
-			}
-			return false
-		},
-		"sub": func(a, b int) int { return a - b },
-		"gt":  func(a, b int) bool { return a > b },
-		"slice": func(s string, i, j int) string {
-			if i >= len(s) {
-				return ""
-			}
-			if j > len(s) {
-				j = len(s)
-			}
-			return s[i:j]
-		},
-		"seq": func(vals ...string) []string { return vals },
-		"formatSalaryRange": func(minVal, maxVal int, currency, period string) string {
-			cur := "$"
-			if currency != "" && currency != "USD" {
-				cur = currency + " "
-			}
-			per := "yr"
-			if period == "hour" {
-				per = "hr"
-			}
-			return fmt.Sprintf("%s%s – %s%s / %s", cur, formatWithCommas(minVal), cur, formatWithCommas(maxVal), per)
-		},
-	}
 }
 
 // formatWithCommas formats an integer with thousands separators: 140000 → "140,000".

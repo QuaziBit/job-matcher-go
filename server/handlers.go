@@ -58,12 +58,12 @@ func (lm *loggedMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func registerRoutes(mux *http.ServeMux, cfg config.Config) {
 	appCfg = cfg
 
-	// Static files — bypass http.FileServer to set correct MIME types
+	// Static files — served from the shared ui/static/ directory
 	mux.HandleFunc("/static/", func(w http.ResponseWriter, r *http.Request) {
-		fsPath := "embedded" + r.URL.Path
-		data, err := embeddedFS.ReadFile(fsPath)
+		fsPath := "ui" + r.URL.Path
+		data, err := uiFS.ReadFile(fsPath)
 		if err != nil {
-			log.Printf("✗ Static file not found: %s (embedded path: %s)", r.URL.Path, fsPath)
+			log.Printf("✗ Static file not found: %s (ui path: %s)", r.URL.Path, fsPath)
 			http.NotFound(w, r)
 			return
 		}
@@ -133,24 +133,7 @@ func parseIDFromPath(path, prefix string) (int64, error) {
 	return id, err
 }
 
-func renderTemplate(w http.ResponseWriter, name string, data interface{}) {
-	tmpl, err := parseTemplate(name)
-	if err != nil {
-		log.Printf("✗ Template parse error [%s]: %v", name, err)
-		http.Error(w, fmt.Sprintf("template parse error: %v", err), http.StatusInternalServerError)
-		return
-	}
-	var buf strings.Builder
-	if err := tmpl.ExecuteTemplate(&buf, "base.html", data); err != nil {
-		log.Printf("✗ Template execute error [%s]: %v", name, err)
-		http.Error(w, fmt.Sprintf("template error: %v", err), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if _, err := fmt.Fprint(w, buf.String()); err != nil {
-		log.Printf("✗ Failed to write template response [%s]: %v", name, err)
-	}
-}
+
 
 // ── Page handlers ─────────────────────────────────────────────────────────────
 
@@ -159,14 +142,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	resumes, err := dbGetResumes()
-	if err != nil {
-		log.Printf("✗ dbGetResumes error (index): %v", err)
-		http.Error(w, "failed to load resumes", http.StatusInternalServerError)
-		return
-	}
-	// Jobs list is loaded client-side via /api/jobs/list on page load
-	renderTemplate(w, "index.html", IndexView{Jobs: nil, Resumes: resumes})
+	serveUIFile(w, "index.html")
 }
 
 func handleJobDetail(w http.ResponseWriter, r *http.Request) {
@@ -175,6 +151,7 @@ func handleJobDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// Validate job exists before serving the shell
 	job, err := dbGetJobByID(id)
 	if err != nil {
 		log.Printf("✗ dbGetJobByID(%d) error: %v", id, err)
@@ -185,98 +162,11 @@ func handleJobDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	app, err := dbGetApplicationByJobID(id)
-	if err != nil {
-		log.Printf("✗ dbGetApplicationByJobID(%d) error: %v", id, err)
-	}
-	if app == nil {
-		app = &Application{JobID: id, Status: "not_applied"}
-	}
-	analyses, err := dbGetAnalysesByJobID(id)
-	if err != nil {
-		log.Printf("✗ dbGetAnalysesByJobID(%d) error: %v", id, err)
-	}
-	resumes, err := dbGetResumes()
-	if err != nil {
-		log.Printf("✗ dbGetResumes error (job detail): %v", err)
-	}
-	// Load salary estimate from DB (nil if not yet estimated or empty).
-	var salaryEstimate *SalaryEstimate
-	if rawSalary, err := dbGetJobSalaryEstimate(id); err != nil {
-		log.Printf("✗ dbGetJobSalaryEstimate(%d) error: %v", id, err)
-	} else if rawSalary != "" {
-		var se SalaryEstimate
-		if err := json.Unmarshal([]byte(rawSalary), &se); err == nil {
-			salaryEstimate = &se
-		}
-	}
-
-	// Derive last-used resume, provider, model, and mode from the most recent analysis.
-	var lastResumeID    int64
-	lastProvider       := "anthropic"
-	lastAnalysisMode   := appCfg.AnalysisMode
-	lastOllamaModel    := appCfg.OllamaModel
-	lastAnthropicModel := appCfg.AnthropicModel
-	lastOpenAIModel    := appCfg.OpenAIModel
-	lastGeminiModel    := appCfg.GeminiModel
-	if len(analyses) > 0 {
-		a := analyses[0]
-		lastResumeID = a.ResumeID
-		if a.LLMProvider != "" {
-			lastProvider = a.LLMProvider
-		}
-		if a.AnalysisMode != "" {
-			lastAnalysisMode = a.AnalysisMode
-		}
-		if a.LLMModel != "" {
-			switch lastProvider {
-			case "ollama":
-				lastOllamaModel = a.LLMModel
-			case "anthropic":
-				lastAnthropicModel = a.LLMModel
-			case "openai":
-				lastOpenAIModel = a.LLMModel
-			case "gemini":
-				lastGeminiModel = a.LLMModel
-			}
-		}
-	} else if salaryEstimate != nil && salaryEstimate.LLMProvider != "" {
-		// Three-tier fallback: analyses → salary estimate → "anthropic"
-		lastProvider = salaryEstimate.LLMProvider
-	}
-
-	renderTemplate(w, "job_detail.html", JobDetailView{
-		Job:              *job,
-		Application:      *app,
-		Analyses:         analyses,
-		Resumes:          resumes,
-		OllamaModel:      lastOllamaModel,
-		AnthropicModel:   lastAnthropicModel,
-		OpenAIModel:      lastOpenAIModel,
-		GeminiModel:      lastGeminiModel,
-		AnalysisMode:     lastAnalysisMode,
-		LastAnalysisMode: lastAnalysisMode,
-		TextQuality:      assessJobTextQuality(job.RawDescription),
-		Comparison:       buildComparison(analyses),
-		LastResumeID:     lastResumeID,
-		LastProvider:     lastProvider,
-		SalaryEstimate:   salaryEstimate,
-		HasSalaryInJD:    jobHasSalary(job.RawDescription),
-		HasAnthropic:     appCfg.AnthropicAPIKey != "",
-		HasOpenAI:        appCfg.OpenAIAPIKey != "",
-		HasGemini:        appCfg.GeminiAPIKey != "",
-		HasOllama:        ollamaAvailable(),
-	})
+	serveUIFile(w, "job_detail.html")
 }
 
 func handleResumes(w http.ResponseWriter, r *http.Request) {
-	resumes, err := dbGetResumes()
-	if err != nil {
-		log.Printf("✗ dbGetResumes error (resumes page): %v", err)
-		http.Error(w, "failed to load resumes", http.StatusInternalServerError)
-		return
-	}
-	renderTemplate(w, "resumes.html", ResumesView{Resumes: resumes})
+	serveUIFile(w, "resumes.html")
 }
 
 // ── Job list API (search + filter + pagination) ───────────────────────────────
@@ -507,6 +397,7 @@ func handleScrapeJobPreview(w http.ResponseWriter, r *http.Request) {
 	hasWarnings := tq.Level != "ok" || len(blockers) > 0
 
 	writeJSON(w, http.StatusOK, ScrapePreviewResponse{
+		URL:             jobURL,
 		Title:           title,
 		Company:         company,
 		Location:        location,
@@ -523,7 +414,7 @@ func handleJobPreview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "GET required")
 		return
 	}
-	renderTemplate(w, "job_preview.html", nil)
+	serveUIFile(w, "job_preview.html")
 }
 
 // handleSavePreview validates and saves a previewed job to the DB.

@@ -318,3 +318,75 @@ func TestLauncherOpenAIKeyCanBeCleared(t *testing.T) {
 		t.Error("expected config on startCh")
 	}
 }
+
+func TestRenderLauncherPage_PopulatesAPIKeys(t *testing.T) {
+	cfg := config.Config{
+		Port:                 8000,
+		Host:                 "127.0.0.1",
+		DBPath:               "job_matcher.db",
+		AnthropicAPIKey:      "sk-ant-testkey",
+		OpenAIAPIKey:         "sk-openai-testkey",
+		GeminiAPIKey:         "gemini-testkey",
+		OllamaBaseURL:        "http://localhost:11434",
+		OllamaModel:          "llama3.1:8b",
+		OllamaTimeoutSeconds: 600,
+		AnalysisMode:         "standard",
+	}
+
+	html := renderLauncherPage(cfg)
+
+	checks := []struct {
+		desc string
+		want string
+	}{
+		{"anthropic key populated", "sk-ant-testkey"},
+		{"openai key populated", "sk-openai-testkey"},
+		{"gemini key populated", "gemini-testkey"},
+		{"ollama url populated", "http://localhost:11434"},
+		{"ollama model populated", "llama3.1:8b"},
+		{"port populated", "8000"},
+		{"no unresolved tokens", "{api_key}"},
+	}
+
+	for _, c := range checks {
+		if c.desc == "no unresolved tokens" {
+			if strings.Contains(html, c.want) {
+				t.Errorf("found unresolved token %q in rendered page", c.want)
+			}
+		} else {
+			if !strings.Contains(html, c.want) {
+				t.Errorf("%s: expected %q in rendered page", c.desc, c.want)
+			}
+		}
+	}
+}
+func TestLauncherIndexHasNoUnresolvedTokens(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.AnthropicAPIKey = "sk-ant-testkey"
+	cfg.OpenAIAPIKey    = "sk-openai-testkey"
+	cfg.GeminiAPIKey    = "gemini-testkey"
+
+	html := renderLauncherPage(cfg)
+
+	// None of these placeholder tokens should survive substitution
+	tokens := []string{
+		"{api_key}",
+		"{openai_key}",
+		"{gemini_key}",
+		"{ollama_url}",
+		"{ollama_model}",
+		"{ollama_timeout}",
+		"{port}",
+		"{host}",
+		"{db_path}",
+		"{checked_fast}",
+		"{checked_standard}",
+		"{checked_detailed}",
+		"{checked_show_more_logs}",
+	}
+	for _, tok := range tokens {
+		if strings.Contains(html, tok) {
+			t.Errorf("unresolved token %q found in rendered launcher page", tok)
+		}
+	}
+}

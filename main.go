@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"syscall"
 
+	"github.com/QuaziBit/job-matcher-go/assets"
 	"github.com/QuaziBit/job-matcher-go/config"
 	"github.com/QuaziBit/job-matcher-go/launcher"
 	"github.com/QuaziBit/job-matcher-go/server"
@@ -55,7 +56,7 @@ func main() {
 	fmt.Printf("\n  Starting app on http://%s:%d …\n\n", appCfg.Host, appCfg.Port)
 
 	// ── Start main app server ────────────────────────────────────────────────
-	appServer := server.New(appCfg)
+	appServer := server.New(appCfg, assets.UI)
 	if err := appServer.Start(); err != nil {
 		log.Fatalf("Failed to start app server: %v", err)
 	}
@@ -85,7 +86,7 @@ func main() {
 			select {
 			case newCfg := <-startCh:
 				log.Printf("→ Restart after stop: port=%d model=%s", newCfg.Port, newCfg.OllamaModel)
-				appServer = server.New(newCfg)
+				appServer = server.New(newCfg, assets.UI)
 				if err := appServer.Start(); err != nil {
 					log.Printf("✗ Failed to restart app server: %v", err)
 				} else {
@@ -102,7 +103,7 @@ func main() {
 			log.Printf("→ Restart signal received: port=%d model=%s", newCfg.Port, newCfg.OllamaModel)
 			fmt.Printf("\n  ↺  Restarting on http://%s:%d …\n", newCfg.Host, newCfg.Port)
 			appServer.Stop()
-			appServer = server.New(newCfg)
+			appServer = server.New(newCfg, assets.UI)
 			if err := appServer.Start(); err != nil {
 				log.Printf("✗ Failed to restart app server: %v", err)
 			} else {
@@ -113,8 +114,8 @@ func main() {
 }
 
 func printBanner(cfgPath string) {
-	cyan  := "\033[96m"
-	bold  := "\033[1m"
+	cyan := "\033[96m"
+	bold := "\033[1m"
 	reset := "\033[0m"
 
 	fmt.Printf("\n%s%s%s\n", cyan, "══════════════════════════════════════════════", reset)
@@ -138,5 +139,3 @@ func openBrowser(url string) {
 		fmt.Printf("  Please open manually: %s\n", url)
 	}
 }
-
-
