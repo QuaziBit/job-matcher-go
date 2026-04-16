@@ -282,7 +282,7 @@ func dbGetJobListItems(f JobFilters) ([]JobListItem, int, error) {
 		); err != nil {
 			return nil, 0, err
 		}
-		item.ScrapedAt, _ = parseTS(ts)
+		item.ScrapedAt = normTS(ts)
 		if score.Valid {
 			v := int(score.Int64)
 			item.BestScore = &v
@@ -316,7 +316,7 @@ func dbGetJobByID(id int64) (*Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	j.ScrapedAt, _ = parseTS(ts)
+	j.ScrapedAt = normTS(ts)
 	return &j, nil
 }
 
@@ -332,7 +332,7 @@ func dbGetJobByURL(u string) (*Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	j.ScrapedAt, _ = parseTS(ts)
+	j.ScrapedAt = normTS(ts)
 	return &j, nil
 }
 
@@ -544,6 +544,16 @@ func parseTS(ts string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("could not parse timestamp: %s", ts)
+}
+
+// normTS parses any supported timestamp format and returns it as
+// "2006-01-02 15:04:05" — the space-separated format expected by app.js.
+func normTS(ts string) string {
+	t, err := parseTS(ts)
+	if err != nil || t.IsZero() {
+		return ts // return as-is if unparseable
+	}
+	return t.UTC().Format("2006-01-02 15:04:05")
 }
 
 func parseMissingSkills(raw string) []MissingSkill {

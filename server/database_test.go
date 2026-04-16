@@ -2,6 +2,7 @@ package server
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -186,6 +187,71 @@ func TestDBJob_Delete(t *testing.T) {
 		t.Error("expected job to be deleted")
 	}
 }
+// ── ScrapedAt format ──────────────────────────────────────────────────────────
+
+func TestDBJob_ScrapedAtIsNonEmpty(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, err := dbInsertJob("https://example.com/date-test", "Date Job", "Corp", "VA", "desc")
+	if err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+	job, err := dbGetJobByID(id)
+	if err != nil || job == nil {
+		t.Fatalf("get failed: %v", err)
+	}
+	if job.ScrapedAt == "" {
+		t.Error("expected ScrapedAt to be non-empty string")
+	}
+}
+
+func TestDBJob_ScrapedAtFormatNoTOrZ(t *testing.T) {
+	// app.js formatJobDate does: dateStr.replace(' ', 'T') + 'Z'
+	// So the string must use a space separator, not T, and must not end with Z.
+	// Correct:   "2024-06-15 14:30:00"
+	// Wrong:     "2024-06-15T14:30:00Z"  (RFC3339 — produces double Z)
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("https://example.com/fmt-test", "Fmt Job", "Corp", "VA", "desc")
+	job, _ := dbGetJobByID(id)
+	if job == nil {
+		t.Fatal("job not found")
+	}
+	if strings.Contains(job.ScrapedAt, "T") {
+		t.Errorf("ScrapedAt must not contain 'T' (RFC3339 format breaks app.js): %q", job.ScrapedAt)
+	}
+	if strings.HasSuffix(job.ScrapedAt, "Z") {
+		t.Errorf("ScrapedAt must not end with 'Z' (RFC3339 format breaks app.js): %q", job.ScrapedAt)
+	}
+}
+
+func TestDBJob_ScrapedAtFormatInJobListItem(t *testing.T) {
+	// Same format check via the jobs list API path
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	dbInsertJob("https://example.com/list-date", "List Job", "Corp", "VA", "desc")
+	items, _, err := dbGetJobListItems(JobFilters{Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("dbGetJobListItems failed: %v", err)
+	}
+	if len(items) == 0 {
+		t.Fatal("expected at least one job")
+	}
+	if items[0].ScrapedAt == "" {
+		t.Error("expected ScrapedAt to be non-empty in JobListItem")
+	}
+	if strings.Contains(items[0].ScrapedAt, "T") {
+		t.Errorf("JobListItem ScrapedAt must not contain 'T': %q", items[0].ScrapedAt)
+	}
+	if strings.HasSuffix(items[0].ScrapedAt, "Z") {
+		t.Errorf("JobListItem ScrapedAt must not end with 'Z': %q", items[0].ScrapedAt)
+	}
+}
+
+
 
 // ── Analyses ──────────────────────────────────────────────────────────────────
 

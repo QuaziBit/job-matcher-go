@@ -12,13 +12,13 @@ type Resume struct {
 }
 
 type Job struct {
-	ID             int64     `json:"id"`
-	URL            string    `json:"url"`
-	Title          string    `json:"title"`
-	Company        string    `json:"company"`
-	Location       string    `json:"location"`
-	RawDescription string    `json:"raw_description"`
-	ScrapedAt      time.Time `json:"scraped_at"`
+	ID             int64  `json:"id"`
+	URL            string `json:"url"`
+	Title          string `json:"title"`
+	Company        string `json:"company"`
+	Location       string `json:"location"`
+	RawDescription string `json:"raw_description"`
+	ScrapedAt      string `json:"scraped_at"`
 }
 
 type MatchedSkill struct {
