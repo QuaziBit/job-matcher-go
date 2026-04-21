@@ -22,6 +22,7 @@ func initDB(dbPath string) error {
 		return fmt.Errorf("open sqlite %q: %w", dbPath, err)
 	}
 	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if err := db.Ping(); err != nil {
 		return fmt.Errorf("ping sqlite %q: %w", dbPath, err)
 	}
@@ -121,6 +122,9 @@ func dbGetResumes() ([]Resume, error) {
 		}
 		r.CreatedAt, _ = parseTS(ts)
 		resumes = append(resumes, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return resumes, nil
 }
@@ -301,6 +305,9 @@ func dbGetJobListItems(f JobFilters) ([]JobListItem, int, error) {
 		item.HasRecruiter = hasRecruiter == 1
 		items = append(items, item)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 	return items, total, nil
 }
 
@@ -443,6 +450,9 @@ func dbGetAnalysesByJobID(jobID int64) ([]Analysis, error) {
 			a.AdjustedScore = a.Score
 		}
 		analyses = append(analyses, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return analyses, nil
 }
