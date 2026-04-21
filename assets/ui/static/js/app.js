@@ -181,6 +181,7 @@ async function addJobManual() {
   const title       = document.getElementById('paste-title').value.trim();
   const company     = document.getElementById('paste-company').value.trim();
   const location    = (document.getElementById('paste-location') || {value:''}).value.trim();
+  const sourceUrl   = (document.getElementById('paste-url')      || {value:''}).value.trim();
   const description = document.getElementById('paste-description').value.trim();
   const btn         = document.getElementById('paste-submit-btn');
 
@@ -195,6 +196,7 @@ async function addJobManual() {
   fd.append('title',       title);
   fd.append('company',     company);
   fd.append('location',    location);
+  fd.append('source_url',  sourceUrl);
   fd.append('description', description);
 
   try {
@@ -474,6 +476,41 @@ async function deleteJob(jobId) {
     }
   } catch(err) {
     logErr('deleteJob', 'fetch threw:', err);
+    toast('Network error', 'error');
+  }
+}
+
+
+// ── Edit / save job URL ───────────────────────────────────────────────────────
+
+function toggleUrlEdit() {
+  const row = document.getElementById('url-edit-row');
+  if (!row) return;
+  const visible = row.style.display === 'block';
+  row.style.display = visible ? 'none' : 'block';
+  if (!visible) {
+    const input = document.getElementById('url-edit-input');
+    if (input) { input.focus(); input.select(); }
+  }
+}
+
+async function saveJobUrl(jobId, url) {
+  log('saveJobUrl', `jobId=${jobId} url="${url}"`);
+  const fd = new FormData();
+  fd.append('url', url);
+  try {
+    const res  = await fetch(`/api/jobs/${jobId}/url`, { method: 'PATCH', body: fd });
+    const data = await res.json();
+    log('saveJobUrl', `response status=${res.status}`, data);
+    if (!res.ok) {
+      logErr('saveJobUrl', `server error ${res.status}:`, data.error);
+      toast(data.error || 'Failed to update URL', 'error');
+      return;
+    }
+    toast('✓ URL updated', 'success');
+    refreshJobDetailPage();
+  } catch(err) {
+    logErr('saveJobUrl', 'fetch threw:', err);
     toast('Network error', 'error');
   }
 }
@@ -1163,11 +1200,14 @@ const TMPL = {
   },
 
   // Job URL link or "pasted description" label
-  jobUrl(url) {
+  jobUrl(url, jobId) {
+    const editBtn = jobId
+      ? `<button class="btn btn-ghost btn-xs" style="margin-left:6px;padding:1px 6px;font-size:11px;" onclick="toggleUrlEdit()" title="Edit source URL">&#9998;</button>`
+      : '';
     if (!url || url.startsWith('manual://')) {
-      return `<span style="color: var(--text-mute);">\u00b7 pasted description</span>`;
+      return `<span style="color: var(--text-mute);">\u00b7 pasted description${editBtn}</span>`;
     }
-    return `<span>\u00b7 <a href="${escHtml(url)}" target="_blank" style="color: var(--amber);">View Original \u2197</a></span>`;
+    return `<span>\u00b7 <a href="${escHtml(url)}" target="_blank" style="color: var(--amber);">View Original \u2197</a>${editBtn}</span>`;
   },
 
   // Score explainer <details> block (static content, no dynamic data)
@@ -1225,6 +1265,7 @@ const TMPL = {
 
   // Page header: title, status badge, company/location, URL, salary
   pageHeader(job, statusClass, statusLabel, urlHtml, salaryHtml) {
+    const currentUrl = (!job.url || job.url.startsWith('manual://')) ? '' : job.url;
     return `
       <div style="margin-bottom: 20px;">
         <a href="/" class="btn btn-ghost btn-sm">\u2190 Back</a>
@@ -1238,6 +1279,15 @@ const TMPL = {
         <div class="flex gap-10 text-dim text-mono text-xs">
           ${TMPL.jobMeta(job.company, job.location)}
           ${urlHtml}
+        </div>
+        <div id="url-edit-row" style="display:none; margin-top:8px; display:none;">
+          <div class="flex gap-10 items-center" style="max-width:600px;">
+            <input id="url-edit-input" type="text" value="${escHtml(currentUrl)}"
+                   placeholder="https://jobs.example.com/posting/12345"
+                   style="flex:1; font-size:12px;" />
+            <button class="btn btn-primary btn-sm" onclick="saveJobUrl(${job.id}, document.getElementById('url-edit-input').value)">Save</button>
+            <button class="btn btn-ghost btn-sm" onclick="toggleUrlEdit()">Cancel</button>
+          </div>
         </div>
         ${salaryHtml}
       </div>`;
@@ -1675,7 +1725,7 @@ const TMPL = {
     const comp = d.comparison;
 
     const salaryHtml    = TMPL.salaryBadge(sal, job.id);
-    const urlHtml       = TMPL.jobUrl(job.url);
+    const urlHtml       = TMPL.jobUrl(job.url, job.id);
     const tqWarning     = TMPL.tqWarning(tq, 'margin-top:14px;');
 
     const lastProvider   = d.last_provider || 'anthropic';

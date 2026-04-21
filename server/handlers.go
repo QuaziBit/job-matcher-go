@@ -479,6 +479,7 @@ func handleAddJobManual(w http.ResponseWriter, r *http.Request) {
 	title := strings.TrimSpace(r.FormValue("title"))
 	company := strings.TrimSpace(r.FormValue("company"))
 	location := strings.TrimSpace(r.FormValue("location"))
+	sourceURL := strings.TrimSpace(r.FormValue("source_url"))
 	description := cleanText(r.FormValue("description"))
 
 	log.Printf("→ Manual job: title=%q company=%q location=%q desc_len=%d", title, company, location, len(description))
@@ -491,16 +492,28 @@ func handleAddJobManual(w http.ResponseWriter, r *http.Request) {
 		title = "Untitled Job"
 	}
 
+	// Use provided source URL if given, otherwise generate synthetic manual:// URL
 	slug := fmt.Sprintf("%x", md5.Sum([]byte(description[:min(200, len(description))])))
 	syntheticURL := "manual://" + slug[:12]
+	jobURL := syntheticURL
+	if sourceURL != "" {
+		jobURL = sourceURL
+	}
 
-	existing, err := dbGetJobByURL(syntheticURL)
+	existing, err := dbGetJobByURL(jobURL)
 	if err != nil {
 		log.Printf("✗ dbGetJobByURL (manual) error: %v", err)
 	}
+	// Also check synthetic URL when source URL provided to catch content duplicates
+	if existing == nil && sourceURL != "" {
+		existing, err = dbGetJobByURL(syntheticURL)
+		if err != nil {
+			log.Printf("✗ dbGetJobByURL (synthetic) error: %v", err)
+		}
+	}
 	if existing != nil {
 		writeJSON(w, http.StatusConflict, map[string]interface{}{
-			"error": "This description has already been added.", "job_id": existing.ID,
+			"error": "This job has already been added.", "job_id": existing.ID,
 		})
 		return
 	}
@@ -508,7 +521,7 @@ func handleAddJobManual(w http.ResponseWriter, r *http.Request) {
 		description = description[:8000] + "\n\n[...truncated for analysis]"
 	}
 
-	id, err := dbInsertJob(syntheticURL, title, company, location, description)
+	id, err := dbInsertJob(jobURL, title, company, location, description)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("dbInsertJob (manual) error: %v", err))
 		return
@@ -580,8 +593,60 @@ func handleJobActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/url") {
+		handleUpdateJobURL(w, r)
+		return
+	}
+
 	log.Printf("✗ Unhandled job action: %s %s", r.Method, path)
 	http.NotFound(w, r)
+}
+
+// handleUpdateJobURL serves PATCH /api/jobs/{id}/url — updates or clears the
+// source URL of a saved job. Clearing restores a synthetic manual:// URL.
+func handleUpdateJobURL(w http.ResponseWriter, r *http.Request) {
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	id, err := parseIDFromPath(r.URL.Path, "/api/jobs/")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	newURL := strings.TrimSpace(r.FormValue("url"))
+
+	// Validate scheme if URL provided
+	if newURL != "" && !strings.HasPrefix(newURL, "http://") && !strings.HasPrefix(newURL, "https://") {
+		writeError(w, http.StatusUnprocessableEntity, "URL must start with http:// or https://")
+		return
+	}
+
+	// Check job exists
+	job, err := dbGetJobByID(id)
+	if err != nil {
+		log.Printf("✗ dbGetJobByID(%d) error: %v", id, err)
+		http.Error(w, "failed to load job", http.StatusInternalServerError)
+		return
+	}
+	if job == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	// If clearing, regenerate synthetic manual:// URL from description
+	if newURL == "" {
+		slug := fmt.Sprintf("%x", md5.Sum([]byte(job.RawDescription[:min(200, len(job.RawDescription))])))
+		newURL = "manual://" + slug[:12]
+	}
+
+	if err := dbUpdateJobURL(id, newURL); err != nil {
+		log.Printf("✗ dbUpdateJobURL(%d) error: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "Failed to update URL.")
+		return
+	}
+	log.Printf("✓ Job %d URL updated to: %s", id, newURL)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "url": newURL})
 }
 
 func handleAnalyzeJob(w http.ResponseWriter, r *http.Request) {

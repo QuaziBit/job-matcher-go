@@ -352,6 +352,11 @@ func dbDeleteJob(id int64) error {
 	return err
 }
 
+func dbUpdateJobURL(id int64, url string) error {
+	_, err := db.Exec(`UPDATE jobs SET url = ? WHERE id = ?`, url, id)
+	return err
+}
+
 func dbGetJobSalaryEstimate(id int64) (string, error) {
 	var raw string
 	err := db.QueryRow(`SELECT COALESCE(salary_estimate, '') FROM jobs WHERE id = ?`, id).Scan(&raw)

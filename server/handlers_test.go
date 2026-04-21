@@ -1092,3 +1092,141 @@ func TestHandleSavePreview_MissingURL(t *testing.T) {
 		t.Errorf("expected 400 when url missing from save-preview, got %d", w.Code)
 	}
 }
+
+// ── PATCH /api/jobs/{id}/url ──────────────────────────────────────────────────
+
+func TestHandleUpdateJobURL_SetsURL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "Co", "VA", "Some job description here for testing purposes only")
+
+	body := strings.NewReader("url=https://example.com/job/123")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/1/url", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/url"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["ok"] != true {
+		t.Error("expected ok:true")
+	}
+	if resp["url"] != "https://example.com/job/123" {
+		t.Errorf("expected url in response, got %v", resp["url"])
+	}
+}
+
+func TestHandleUpdateJobURL_ClearRestoresSynthetic(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("https://example.com/job/1", "Dev", "Co", "VA", "Some job description here for testing purposes only")
+
+	body := strings.NewReader("url=")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/1/url", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/url"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	url, _ := resp["url"].(string)
+	if !strings.HasPrefix(url, "manual://") {
+		t.Errorf("expected manual:// URL after clear, got %q", url)
+	}
+}
+
+func TestHandleUpdateJobURL_InvalidSchemeReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "Co", "VA", "Some job description here for testing purposes only")
+
+	body := strings.NewReader("url=ftp://bad.example.com")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/1/url", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/url"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422 for invalid scheme, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdateJobURL_NotFoundReturns404(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("url=https://example.com")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/99999/url", body)
+	req.URL.Path = "/api/jobs/99999/url"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for missing job, got %d", w.Code)
+	}
+}
+
+func TestHandleAddJobManual_WithSourceURL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("title=Dev&company=Co&source_url=https://linkedin.com/jobs/12345&description=Some+job+description+here+for+testing+purposes+only")
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/add-manual", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleAddJobManual(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	id := int64(resp["job_id"].(float64))
+
+	job, _ := dbGetJobByID(id)
+	if job == nil {
+		t.Fatal("job not found")
+	}
+	if job.URL != "https://linkedin.com/jobs/12345" {
+		t.Errorf("expected source URL stored, got %q", job.URL)
+	}
+}
+
+func TestHandleAddJobManual_WithoutSourceURLIsManual(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("title=Dev&company=Co&description=Some+job+description+here+for+testing+purposes+only")
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/add-manual", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleAddJobManual(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	id := int64(resp["job_id"].(float64))
+
+	job, _ := dbGetJobByID(id)
+	if job == nil {
+		t.Fatal("job not found")
+	}
+	if !strings.HasPrefix(job.URL, "manual://") {
+		t.Errorf("expected manual:// URL, got %q", job.URL)
+	}
+}
