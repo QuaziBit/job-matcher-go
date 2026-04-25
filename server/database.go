@@ -22,6 +22,7 @@ func initDB(dbPath string) error {
 		return fmt.Errorf("open sqlite %q: %w", dbPath, err)
 	}
 	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if err := db.Ping(); err != nil {
 		return fmt.Errorf("ping sqlite %q: %w", dbPath, err)
 	}
@@ -121,6 +122,9 @@ func dbGetResumes() ([]Resume, error) {
 		}
 		r.CreatedAt, _ = parseTS(ts)
 		resumes = append(resumes, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return resumes, nil
 }
@@ -282,7 +286,7 @@ func dbGetJobListItems(f JobFilters) ([]JobListItem, int, error) {
 		); err != nil {
 			return nil, 0, err
 		}
-		item.ScrapedAt, _ = parseTS(ts)
+		item.ScrapedAt = normTS(ts)
 		if score.Valid {
 			v := int(score.Int64)
 			item.BestScore = &v
@@ -301,6 +305,9 @@ func dbGetJobListItems(f JobFilters) ([]JobListItem, int, error) {
 		item.HasRecruiter = hasRecruiter == 1
 		items = append(items, item)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 	return items, total, nil
 }
 
@@ -316,7 +323,7 @@ func dbGetJobByID(id int64) (*Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	j.ScrapedAt, _ = parseTS(ts)
+	j.ScrapedAt = normTS(ts)
 	return &j, nil
 }
 
@@ -332,7 +339,7 @@ func dbGetJobByURL(u string) (*Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	j.ScrapedAt, _ = parseTS(ts)
+	j.ScrapedAt = normTS(ts)
 	return &j, nil
 }
 
@@ -349,6 +356,11 @@ func dbInsertJob(jobURL, title, company, location, description string) (int64, e
 
 func dbDeleteJob(id int64) error {
 	_, err := db.Exec(`DELETE FROM jobs WHERE id = ?`, id)
+	return err
+}
+
+func dbUpdateJobURL(id int64, url string) error {
+	_, err := db.Exec(`UPDATE jobs SET url = ? WHERE id = ?`, url, id)
 	return err
 }
 
@@ -438,6 +450,9 @@ func dbGetAnalysesByJobID(jobID int64) ([]Analysis, error) {
 			a.AdjustedScore = a.Score
 		}
 		analyses = append(analyses, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return analyses, nil
 }
@@ -544,6 +559,16 @@ func parseTS(ts string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("could not parse timestamp: %s", ts)
+}
+
+// normTS parses any supported timestamp format and returns it as
+// "2006-01-02 15:04:05" — the space-separated format expected by app.js.
+func normTS(ts string) string {
+	t, err := parseTS(ts)
+	if err != nil || t.IsZero() {
+		return ts // return as-is if unparseable
+	}
+	return t.UTC().Format("2006-01-02 15:04:05")
 }
 
 func parseMissingSkills(raw string) []MissingSkill {

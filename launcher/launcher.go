@@ -4,34 +4,36 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"strconv"
 	"sync"
 
+	"github.com/QuaziBit/job-matcher-go/assets"
 	"github.com/QuaziBit/job-matcher-go/config"
 )
 
 // Launcher manages the pre-start configuration UI.
 type Launcher struct {
-	cfg      config.Config
-	cfgPath  string
-	srv      *http.Server
-	port     int
-	startCh  chan config.Config // signals main to start the app server
-	stopCh   chan struct{}      // signals main to stop the app server
+	cfg       config.Config
+	cfgPath   string
+	srv       *http.Server
+	port      int
+	startCh   chan config.Config // signals main to start the app server
+	stopCh    chan struct{}      // signals main to stop the app server
 	restartCh chan config.Config // signals main to restart with new config
-	mu       sync.Mutex
+	mu        sync.Mutex
 }
 
 // New creates a Launcher.
 func New(cfg config.Config, cfgPath string, startCh chan config.Config) *Launcher {
 	return &Launcher{
-		cfg:      cfg,
-		cfgPath:  cfgPath,
-		startCh:  startCh,
-		stopCh:   make(chan struct{}, 1),
+		cfg:       cfg,
+		cfgPath:   cfgPath,
+		startCh:   startCh,
+		stopCh:    make(chan struct{}, 1),
 		restartCh: make(chan config.Config, 1),
 	}
 }
@@ -57,6 +59,16 @@ func (l *Launcher) Start() (string, error) {
 	mux.HandleFunc("/start", l.handleStart)
 	mux.HandleFunc("/stop", l.handleStop)
 	mux.HandleFunc("/restart", l.handleRestart)
+
+	sub, err := fs.Sub(assets.UI, "ui/launcher")
+	if err != nil {
+		log.Fatalf("failed to create sub FS: %v", err)
+	}
+
+	mux.Handle("/launcher_ui/", http.StripPrefix(
+		"/launcher_ui/",
+		http.FileServer(http.FS(sub)),
+	))
 
 	l.srv = &http.Server{Handler: mux}
 	go func() {
@@ -92,17 +104,17 @@ func (l *Launcher) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 // handleHealth returns a JSON health report.
 func (l *Launcher) handleHealth(w http.ResponseWriter, r *http.Request) {
-	dbPath       := r.URL.Query().Get("db_path")
-	ollamaURL    := r.URL.Query().Get("ollama_url")
-	apiKey       := r.URL.Query().Get("api_key")
-	openaiKey    := r.URL.Query().Get("openai_key")
-	geminiKey    := r.URL.Query().Get("gemini_key")
+	dbPath := r.URL.Query().Get("db_path")
+	ollamaURL := r.URL.Query().Get("ollama_url")
+	apiKey := r.URL.Query().Get("api_key")
+	openaiKey := r.URL.Query().Get("openai_key")
+	geminiKey := r.URL.Query().Get("gemini_key")
 
 	if dbPath == "" {
 		l.mu.Lock()
-		dbPath    = l.cfg.DBPath
+		dbPath = l.cfg.DBPath
 		ollamaURL = l.cfg.OllamaBaseURL
-		apiKey    = l.cfg.AnthropicAPIKey
+		apiKey = l.cfg.AnthropicAPIKey
 		openaiKey = l.cfg.OpenAIAPIKey
 		geminiKey = l.cfg.GeminiAPIKey
 		l.mu.Unlock()

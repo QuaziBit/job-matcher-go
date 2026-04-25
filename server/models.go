@@ -12,13 +12,13 @@ type Resume struct {
 }
 
 type Job struct {
-	ID             int64     `json:"id"`
-	URL            string    `json:"url"`
-	Title          string    `json:"title"`
-	Company        string    `json:"company"`
-	Location       string    `json:"location"`
-	RawDescription string    `json:"raw_description"`
-	ScrapedAt      time.Time `json:"scraped_at"`
+	ID             int64  `json:"id"`
+	URL            string `json:"url"`
+	Title          string `json:"title"`
+	Company        string `json:"company"`
+	Location       string `json:"location"`
+	RawDescription string `json:"raw_description"`
+	ScrapedAt      string `json:"scraped_at"`
 }
 
 type MatchedSkill struct {
@@ -122,6 +122,7 @@ type JobTextQuality struct {
 }
 
 type ScrapePreviewResponse struct {
+	URL             string         `json:"url"`
 	Title           string         `json:"title"`
 	Company         string         `json:"company"`
 	Location        string         `json:"location"`
@@ -168,6 +169,46 @@ type IndexView struct {
 
 type ResumesView struct {
 	Resumes []Resume
+}
+
+
+// ── v5 API response types ─────────────────────────────────────────────────────
+
+// ResumeComparisonJSON is the JSON-serialisable version of ResumeComparison.
+type ResumeComparisonJSON struct {
+	ResumeA      Analysis `json:"resume_a"`
+	ResumeB      Analysis `json:"resume_b"`
+	BetterFit    string   `json:"better_fit"`
+	BetterReason string   `json:"better_reason"`
+}
+
+// JobDetailAPIResponse is returned by GET /api/jobs/{id}/detail.
+type JobDetailAPIResponse struct {
+	Job            Job                   `json:"job"`
+	Application    Application           `json:"application"`
+	Analyses       []Analysis            `json:"analyses"`
+	Resumes        []Resume              `json:"resumes"`
+	SalaryEstimate *SalaryEstimate       `json:"salary_estimate"`
+	TextQuality    JobTextQuality        `json:"text_quality"`
+	Comparison     *ResumeComparisonJSON `json:"comparison"`
+	LastResumeID   int64                 `json:"last_resume_id"`
+	LastProvider   string                `json:"last_provider"`
+	AnalysisMode   string                `json:"analysis_mode"`
+	OllamaModel    string                `json:"ollama_model"`
+	AnthropicModel string                `json:"anthropic_model"`
+	OpenAIModel    string                `json:"openai_model"`
+	GeminiModel    string                `json:"gemini_model"`
+	HasSalaryInJD  bool                  `json:"has_salary_in_jd"`
+}
+
+// ProvidersStatusResponse is returned by GET /api/providers/status.
+type ProvidersStatusResponse struct {
+	HasAnthropic    bool              `json:"has_anthropic"`
+	HasOpenAI       bool              `json:"has_openai"`
+	HasGemini       bool              `json:"has_gemini"`
+	HasOllama       bool              `json:"has_ollama"`
+	DefaultProvider string            `json:"default_provider"`
+	DefaultModels   map[string]string `json:"default_models"`
 }
 
 // ── API response helpers ──────────────────────────────────────────────────────

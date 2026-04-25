@@ -2,8 +2,11 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -603,5 +606,627 @@ func TestProviderFlags_GeminiKeyPresent(t *testing.T) {
 
 	if appCfg.GeminiAPIKey == "" {
 		t.Error("expected HasGemini=true when key is set")
+	}
+}
+
+// ── GET /api/jobs/{id}/detail ─────────────────────────────────────────────────
+
+func TestHandleJobDetailAPI_NotFound(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs/9999/detail", nil)
+	req.URL.Path = "/api/jobs/9999/detail"
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for missing job, got %d", w.Code)
+	}
+}
+
+func TestHandleJobDetailAPI_WrongMethod(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/1/detail", nil)
+	req.URL.Path = "/api/jobs/1/detail"
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	// POST /detail is not handled — falls through to 404
+	if w.Code == http.StatusOK {
+		t.Errorf("expected non-200 for POST /detail, got %d", w.Code)
+	}
+}
+
+func TestHandleJobDetailAPI_ReturnsJob(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Insert a job
+	jobID, err := dbInsertJob("https://example.com/job/detail-test", "Go Engineer", "Acme", "VA", "Go experience required")
+	if err != nil {
+		t.Fatalf("dbInsertJob failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs/1/detail", nil)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(jobID, 10) + "/detail"
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp JobDetailAPIResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Job.Title != "Go Engineer" {
+		t.Errorf("expected title 'Go Engineer', got %q", resp.Job.Title)
+	}
+	if resp.Job.Company != "Acme" {
+		t.Errorf("expected company 'Acme', got %q", resp.Job.Company)
+	}
+	if resp.Application.Status != "not_applied" {
+		t.Errorf("expected default status 'not_applied', got %q", resp.Application.Status)
+	}
+	if resp.Analyses == nil {
+		t.Error("expected analyses to be non-nil slice")
+	}
+	if resp.Resumes == nil {
+		t.Error("expected resumes to be non-nil slice")
+	}
+}
+
+func TestHandleJobDetailAPI_ContentTypeJSON(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	jobID, err := dbInsertJob("https://example.com/job/ct-test", "Dev", "Corp", "NY", "Some job")
+	if err != nil {
+		t.Fatalf("dbInsertJob failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs/1/detail", nil)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(jobID, 10) + "/detail"
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "application/json") {
+		t.Errorf("expected Content-Type application/json, got %q", ct)
+	}
+}
+
+// ── GET /api/providers/status ─────────────────────────────────────────────────
+
+func TestHandleProvidersStatus_OK(t *testing.T) {
+	origAnthropic := appCfg.AnthropicAPIKey
+	origOpenAI    := appCfg.OpenAIAPIKey
+	origGemini    := appCfg.GeminiAPIKey
+	appCfg.AnthropicAPIKey = "sk-ant-test"
+	appCfg.OpenAIAPIKey    = ""
+	appCfg.GeminiAPIKey    = ""
+	defer func() {
+		appCfg.AnthropicAPIKey = origAnthropic
+		appCfg.OpenAIAPIKey    = origOpenAI
+		appCfg.GeminiAPIKey    = origGemini
+	}()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/providers/status", nil)
+	w := httptest.NewRecorder()
+	handleProvidersStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp ProvidersStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if !resp.HasAnthropic {
+		t.Error("expected has_anthropic=true when key is set")
+	}
+	if resp.HasOpenAI {
+		t.Error("expected has_openai=false when key is empty")
+	}
+	if resp.HasGemini {
+		t.Error("expected has_gemini=false when key is empty")
+	}
+}
+
+func TestHandleProvidersStatus_WrongMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/providers/status", nil)
+	w := httptest.NewRecorder()
+	handleProvidersStatus(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleProvidersStatus_ContentTypeJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/providers/status", nil)
+	w := httptest.NewRecorder()
+	handleProvidersStatus(w, req)
+
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "application/json") {
+		t.Errorf("expected Content-Type application/json, got %q", ct)
+	}
+}
+
+func TestHandleProvidersStatus_AllProvidersAbsent(t *testing.T) {
+	origAnthropic := appCfg.AnthropicAPIKey
+	origOpenAI    := appCfg.OpenAIAPIKey
+	origGemini    := appCfg.GeminiAPIKey
+	appCfg.AnthropicAPIKey = ""
+	appCfg.OpenAIAPIKey    = ""
+	appCfg.GeminiAPIKey    = ""
+	defer func() {
+		appCfg.AnthropicAPIKey = origAnthropic
+		appCfg.OpenAIAPIKey    = origOpenAI
+		appCfg.GeminiAPIKey    = origGemini
+	}()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/providers/status", nil)
+	w := httptest.NewRecorder()
+	handleProvidersStatus(w, req)
+
+	var resp ProvidersStatusResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.HasAnthropic || resp.HasOpenAI || resp.HasGemini {
+		t.Error("expected all cloud providers false when keys are empty")
+	}
+}
+
+func TestHandleProvidersStatus_DefaultProviderAnthropicWhenKeySet(t *testing.T) {
+	origAnthropic := appCfg.AnthropicAPIKey
+	origOpenAI    := appCfg.OpenAIAPIKey
+	origGemini    := appCfg.GeminiAPIKey
+	appCfg.AnthropicAPIKey = "sk-ant-test"
+	appCfg.OpenAIAPIKey    = ""
+	appCfg.GeminiAPIKey    = ""
+	defer func() {
+		appCfg.AnthropicAPIKey = origAnthropic
+		appCfg.OpenAIAPIKey    = origOpenAI
+		appCfg.GeminiAPIKey    = origGemini
+	}()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/providers/status", nil)
+	w := httptest.NewRecorder()
+	handleProvidersStatus(w, req)
+
+	var resp ProvidersStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.DefaultProvider != "anthropic" {
+		t.Errorf("expected default_provider=anthropic, got %q", resp.DefaultProvider)
+	}
+}
+
+func TestHandleProvidersStatus_DefaultProviderOllamaWhenNoKeysSet(t *testing.T) {
+	origAnthropic := appCfg.AnthropicAPIKey
+	origOpenAI    := appCfg.OpenAIAPIKey
+	origGemini    := appCfg.GeminiAPIKey
+	appCfg.AnthropicAPIKey = ""
+	appCfg.OpenAIAPIKey    = ""
+	appCfg.GeminiAPIKey    = ""
+	defer func() {
+		appCfg.AnthropicAPIKey = origAnthropic
+		appCfg.OpenAIAPIKey    = origOpenAI
+		appCfg.GeminiAPIKey    = origGemini
+	}()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/providers/status", nil)
+	w := httptest.NewRecorder()
+	handleProvidersStatus(w, req)
+
+	var resp ProvidersStatusResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.DefaultProvider != "ollama" {
+		t.Errorf("expected default_provider=ollama when no keys set, got %q", resp.DefaultProvider)
+	}
+}
+
+// ── GET /api/resumes/ ─────────────────────────────────────────────────────────
+
+func TestHandleResumesList_EmptyDB(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/resumes/", nil)
+	w := httptest.NewRecorder()
+	handleResumesList(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp map[string][]Resume
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	resumes, ok := resp["resumes"]
+	if !ok {
+		t.Fatal("expected 'resumes' key in response")
+	}
+	if len(resumes) != 0 {
+		t.Errorf("expected 0 resumes, got %d", len(resumes))
+	}
+}
+
+func TestHandleResumesList_WithResumes(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	if _, err := dbInsertResume("v1 General", "Resume content here"); err != nil {
+		t.Fatalf("dbInsertResume failed: %v", err)
+	}
+	if _, err := dbInsertResume("v2 Tailored", "Tailored content here"); err != nil {
+		t.Fatalf("dbInsertResume failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/resumes/", nil)
+	w := httptest.NewRecorder()
+	handleResumesList(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp map[string][]Resume
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp["resumes"]) != 2 {
+		t.Errorf("expected 2 resumes, got %d", len(resp["resumes"]))
+	}
+	if resp["resumes"][0].Label == "" {
+		t.Error("expected resume label to be non-empty")
+	}
+}
+
+func TestHandleResumesList_WrongMethod(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/resumes/", nil)
+	w := httptest.NewRecorder()
+	handleResumesList(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleResumesList_ContentTypeJSON(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/resumes/", nil)
+	w := httptest.NewRecorder()
+	handleResumesList(w, req)
+
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "application/json") {
+		t.Errorf("expected Content-Type application/json, got %q", ct)
+	}
+}
+
+// ── Page shell handlers ───────────────────────────────────────────────────────
+
+func TestHandleIndex_ServesHTML(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	handleIndex(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("expected text/html Content-Type, got %q", ct)
+	}
+}
+
+func TestHandleIndex_NotFoundForSubPath(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/notaroute", nil)
+	w := httptest.NewRecorder()
+	handleIndex(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for non-root path, got %d", w.Code)
+	}
+}
+
+func TestHandleResumes_ServesHTML(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/resumes", nil)
+	w := httptest.NewRecorder()
+	handleResumes(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("expected text/html Content-Type, got %q", ct)
+	}
+}
+
+func TestHandleJobPreview_ServesHTML(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs/preview", nil)
+	w := httptest.NewRecorder()
+	handleJobPreview(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("expected text/html Content-Type, got %q", ct)
+	}
+}
+
+func TestHandleJobPreview_WrongMethod(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs/preview", nil)
+	w := httptest.NewRecorder()
+	handleJobPreview(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleJobDetail_ServesHTML(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	jobID, err := dbInsertJob("https://example.com/shell-test", "Shell Test", "Corp", "VA", "Some job description here")
+	if err != nil {
+		t.Fatalf("dbInsertJob failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/job/1", nil)
+	req.URL.Path = "/job/" + strconv.FormatInt(jobID, 10)
+	w := httptest.NewRecorder()
+	handleJobDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("expected text/html Content-Type, got %q", ct)
+	}
+}
+
+func TestHandleJobDetail_NotFoundForMissingJob(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/job/99999", nil)
+	req.URL.Path = "/job/99999"
+	w := httptest.NewRecorder()
+	handleJobDetail(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for missing job, got %d", w.Code)
+	}
+}
+
+// ── handleScrapeJobPreview — URL field in response ───────────────────────────
+
+func TestHandleScrapeJobPreview_IncludesURLInResponse(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Spin up a minimal HTTP server to act as the job page
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><head><title>Go Engineer at Acme</title></head><body>
+			<h1>Go Engineer</h1><p>We need a Go developer with 3+ years of experience
+			building REST APIs, working with PostgreSQL, and deploying to AWS.
+			Strong knowledge of Docker and Kubernetes required.</p></body></html>`)
+	}))
+	defer ts.Close()
+
+	body := strings.NewReader("url=" + ts.URL)
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/scrape", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleScrapeJobPreview(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — body: %s", w.Code, w.Body.String())
+	}
+
+	var resp ScrapePreviewResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.URL != ts.URL {
+		t.Errorf("expected url=%q in response, got %q", ts.URL, resp.URL)
+	}
+}
+
+func TestHandleScrapeJobPreview_MissingURL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("")
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/scrape", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleScrapeJobPreview(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing url, got %d", w.Code)
+	}
+}
+
+func TestHandleSavePreview_MissingURL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("title=Engineer&company=Acme&description=Some+job+description+here")
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/save-preview", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleSavePreview(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 when url missing from save-preview, got %d", w.Code)
+	}
+}
+
+// ── PATCH /api/jobs/{id}/url ──────────────────────────────────────────────────
+
+func TestHandleUpdateJobURL_SetsURL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "Co", "VA", "Some job description here for testing purposes only")
+
+	body := strings.NewReader("url=https://example.com/job/123")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/1/url", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/url"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["ok"] != true {
+		t.Error("expected ok:true")
+	}
+	if resp["url"] != "https://example.com/job/123" {
+		t.Errorf("expected url in response, got %v", resp["url"])
+	}
+}
+
+func TestHandleUpdateJobURL_ClearRestoresSynthetic(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("https://example.com/job/1", "Dev", "Co", "VA", "Some job description here for testing purposes only")
+
+	body := strings.NewReader("url=")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/1/url", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/url"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	url, _ := resp["url"].(string)
+	if !strings.HasPrefix(url, "manual://") {
+		t.Errorf("expected manual:// URL after clear, got %q", url)
+	}
+}
+
+func TestHandleUpdateJobURL_InvalidSchemeReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "Co", "VA", "Some job description here for testing purposes only")
+
+	body := strings.NewReader("url=ftp://bad.example.com")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/1/url", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/url"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422 for invalid scheme, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdateJobURL_NotFoundReturns404(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("url=https://example.com")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/99999/url", body)
+	req.URL.Path = "/api/jobs/99999/url"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for missing job, got %d", w.Code)
+	}
+}
+
+func TestHandleAddJobManual_WithSourceURL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("title=Dev&company=Co&source_url=https://linkedin.com/jobs/12345&description=Some+job+description+here+for+testing+purposes+only")
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/add-manual", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleAddJobManual(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	id := int64(resp["job_id"].(float64))
+
+	job, _ := dbGetJobByID(id)
+	if job == nil {
+		t.Fatal("job not found")
+	}
+	if job.URL != "https://linkedin.com/jobs/12345" {
+		t.Errorf("expected source URL stored, got %q", job.URL)
+	}
+}
+
+func TestHandleAddJobManual_WithoutSourceURLIsManual(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("title=Dev&company=Co&description=Some+job+description+here+for+testing+purposes+only")
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/add-manual", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleAddJobManual(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	id := int64(resp["job_id"].(float64))
+
+	job, _ := dbGetJobByID(id)
+	if job == nil {
+		t.Fatal("job not found")
+	}
+	if !strings.HasPrefix(job.URL, "manual://") {
+		t.Errorf("expected manual:// URL, got %q", job.URL)
 	}
 }
