@@ -1,8 +1,9 @@
 module github.com/QuaziBit/job-matcher-go
 
-go 1.21
+go 1.24.1
 
 require (
+	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	golang.org/x/net v0.24.0
 	modernc.org/sqlite v1.29.9
 )

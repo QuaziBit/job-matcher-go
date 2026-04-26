@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -1228,5 +1230,131 @@ func TestHandleAddJobManual_WithoutSourceURLIsManual(t *testing.T) {
 	}
 	if !strings.HasPrefix(job.URL, "manual://") {
 		t.Errorf("expected manual:// URL, got %q", job.URL)
+	}
+}
+
+// ── POST /api/resumes/extract ─────────────────────────────────────────────────
+
+func TestHandleResumeExtract_TXT(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	txtContent := strings.Repeat("John Doe\nSoftware Engineer\nPython Go Docker AWS PostgreSQL\n", 5)
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, _ := writer.CreateFormFile("file", "resume.txt")
+	part.Write([]byte(txtContent))
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/resumes/extract", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+	handleResumeExtract(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if _, ok := resp["text"]; !ok {
+		t.Error("expected 'text' field in response")
+	}
+	if _, ok := resp["char_count"]; !ok {
+		t.Error("expected 'char_count' field in response")
+	}
+}
+
+func TestHandleResumeExtract_UnsupportedType(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, _ := writer.CreateFormFile("file", "resume.md")
+	part.Write([]byte("# Resume"))
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/resumes/extract", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+	handleResumeExtract(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleResumeExtract_TooShort(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, _ := writer.CreateFormFile("file", "resume.txt")
+	part.Write([]byte("Too short"))
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/resumes/extract", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+	handleResumeExtract(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleResumeExtract_WrongMethod(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/resumes/extract", nil)
+	w := httptest.NewRecorder()
+	handleResumeExtract(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// ── GET /api/resumes/{id} ─────────────────────────────────────────────────────
+
+func TestHandleGetResume_ReturnsContent(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertResume("v1", strings.Repeat("John Doe Software Engineer Python Go Docker AWS\n", 5))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/resumes/1", nil)
+	req.URL.Path = "/api/resumes/" + strconv.FormatInt(id, 10)
+	w := httptest.NewRecorder()
+	handleResumeActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["label"] != "v1" {
+		t.Errorf("expected label=v1, got %v", resp["label"])
+	}
+	if _, ok := resp["content"]; !ok {
+		t.Error("expected content field")
+	}
+	if _, ok := resp["char_count"]; !ok {
+		t.Error("expected char_count field")
+	}
+}
+
+func TestHandleGetResume_NotFound(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/resumes/99999", nil)
+	w := httptest.NewRecorder()
+	handleResumeActions(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
 	}
 }

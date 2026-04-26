@@ -92,6 +92,7 @@ func registerRoutes(mux *http.ServeMux, cfg config.Config) {
 	mux.HandleFunc("/api/jobs/", handleJobActions)
 	mux.HandleFunc("/api/analyses/", handleAnalysisActions)
 	mux.HandleFunc("/api/resumes/add", handleAddResume)
+	mux.HandleFunc("/api/resumes/extract", handleResumeExtract)
 	mux.HandleFunc("/api/resumes/", handleResumeActions)
 	mux.HandleFunc("/api/ollama/models", handleOllamaModels)
 	mux.HandleFunc("/api/providers/models", handleProviderModels)
@@ -941,6 +942,11 @@ func handleResumeActions(w http.ResponseWriter, r *http.Request) {
 		handleResumesList(w, r)
 		return
 	}
+	// GET /api/resumes/{id} — get single resume with full content
+	if r.Method == http.MethodGet {
+		handleGetResume(w, r)
+		return
+	}
 	if r.Method != http.MethodDelete {
 		writeError(w, http.StatusMethodNotAllowed, "DELETE required")
 		return
@@ -1107,6 +1113,90 @@ func handleProvidersStatus(w http.ResponseWriter, r *http.Request) {
 			"ollama":    appCfg.OllamaModel,
 		},
 	})
+}
+
+// handleGetResume serves GET /api/resumes/{id} — returns full resume content.
+func handleGetResume(w http.ResponseWriter, r *http.Request) {
+	id, err := parseIDFromPath(r.URL.Path, "/api/resumes/")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	r2, err := dbGetResumeByID(id)
+	if err != nil {
+		log.Printf("✗ dbGetResumeByID(%d) error: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "failed to load resume")
+		return
+	}
+	if r2 == nil {
+		writeError(w, http.StatusNotFound, "Resume not found.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"id":         r2.ID,
+		"label":      r2.Label,
+		"content":    r2.Content,
+		"created_at": r2.CreatedAt.Format("2006-01-02 15:04:05"),
+		"char_count": len(r2.Content),
+	})
+}
+
+// handleResumeExtract serves POST /api/resumes/extract — extracts plain text
+// from an uploaded TXT, PDF, or DOCX file.
+func handleResumeExtract(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "file is required")
+		return
+	}
+	defer file.Close()
+
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read file")
+		return
+	}
+
+	name := strings.ToLower(header.Filename)
+	var text string
+
+	switch {
+	case strings.HasSuffix(name, ".txt"):
+		text = string(raw)
+	case strings.HasSuffix(name, ".docx"):
+		text, err = extractDocxText(raw)
+		if err != nil {
+			log.Printf("✗ extractDocxText error: %v", err)
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to extract DOCX text: %v", err))
+			return
+		}
+	case strings.HasSuffix(name, ".pdf"):
+		text, err = extractPDFText(raw)
+		if err != nil {
+			log.Printf("✗ extractPDFText error: %v", err)
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to extract PDF text: %v", err))
+			return
+		}
+	default:
+		writeError(w, http.StatusUnprocessableEntity, "Unsupported file type. Please upload a TXT, PDF, or DOCX file.")
+		return
+	}
+
+	text = strings.TrimSpace(text)
+	if len(text) < 50 {
+		writeError(w, http.StatusUnprocessableEntity, "Could not extract enough text from the file (minimum 50 characters).")
+		return
+	}
+	log.Printf("✓ Resume extracted from %s: %d chars", header.Filename, len(text))
+	writeJSON(w, http.StatusOK, map[string]interface{}{"text": text, "char_count": len(text)})
 }
 
 // handleResumesList serves GET /api/resumes/ — returns all saved resumes as JSON.
