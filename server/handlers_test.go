@@ -1358,3 +1358,158 @@ func TestHandleGetResume_NotFound(t *testing.T) {
 		t.Errorf("expected 404, got %d", w.Code)
 	}
 }
+
+// ── /api/jobs/{id}/email ──────────────────────────────────────────────────────
+
+func TestHandleGetJobEmail_ReturnsNullWhenNone(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("https://example.com/e1", "Dev", "Co", "VA", "Some job description here for testing")
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs/1/email", nil)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/email"
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["email"] != nil {
+		t.Errorf("expected email=null, got %v", resp["email"])
+	}
+}
+
+func TestHandleGetJobEmail_ReturnsEmail(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("https://example.com/e2", "Dev", "Co", "VA", "Some job description here for testing")
+	dbSaveJobEmail(id, "<p>Interview confirmed</p>")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs/1/email", nil)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/email"
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["email"] == nil {
+		t.Fatal("expected email to be non-null")
+	}
+}
+
+func TestHandleSaveJobEmail_Upserts(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("https://example.com/e3", "Dev", "Co", "VA", "Some job description here for testing")
+
+	for _, html := range []string{"<p>First</p>", "<p>Second</p>"} {
+		body := strings.NewReader("raw_html=" + html)
+		req := httptest.NewRequest(http.MethodPost, "/api/jobs/1/email", body)
+		req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/email"
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		handleJobActions(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+		}
+	}
+
+	email, _ := dbGetJobEmail(id)
+	if email == nil || email.RawHTML != "<p>Second</p>" {
+		t.Errorf("expected Second, got %v", email)
+	}
+}
+
+func TestHandleSaveJobEmail_EmptyReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("https://example.com/e4", "Dev", "Co", "VA", "Some job description here for testing")
+	body := strings.NewReader("raw_html=")
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/1/email", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/email"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleDeleteJobEmail(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("https://example.com/e5", "Dev", "Co", "VA", "Some job description here for testing")
+	dbSaveJobEmail(id, "<p>Email</p>")
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/jobs/1/email", nil)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/email"
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	email, _ := dbGetJobEmail(id)
+	if email != nil {
+		t.Error("expected email to be deleted")
+	}
+	// Regression: DELETE /api/jobs/{id}/email must NOT delete the job itself
+	job, _ := dbGetJobByID(id)
+	if job == nil {
+		t.Error("job should still exist after deleting its email")
+	}
+}
+
+func TestHandleDeleteJobEmail_DoesNotDeleteJob(t *testing.T) {
+	// Regression guard: the generic DELETE handler in handleJobActions
+	// was catching DELETE /api/jobs/{id}/email before the /email suffix
+	// check, causing the entire job to be deleted instead of just the email.
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("https://example.com/e5b", "Dev", "Co", "VA", "Some job description here for testing")
+	dbSaveJobEmail(id, "<p>Email</p>")
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/jobs/1/email", nil)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/email"
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	// Job must still exist
+	job, _ := dbGetJobByID(id)
+	if job == nil {
+		t.Fatal("REGRESSION: DELETE /email deleted the entire job")
+	}
+	// Email must be gone
+	email, _ := dbGetJobEmail(id)
+	if email != nil {
+		t.Error("expected email to be deleted")
+	}
+}
+
+func TestHandleJobEmail_CascadesOnJobDelete(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("https://example.com/e6", "Dev", "Co", "VA", "Some job description here for testing")
+	dbSaveJobEmail(id, "<p>Email</p>")
+	dbDeleteJob(id)
+
+	email, _ := dbGetJobEmail(id)
+	if email != nil {
+		t.Error("expected email to be cascade deleted with job")
+	}
+}

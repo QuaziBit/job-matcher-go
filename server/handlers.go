@@ -539,6 +539,21 @@ func handleJobActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Email endpoints — must come before the generic DELETE handler below
+	if strings.HasSuffix(path, "/email") {
+		switch r.Method {
+		case http.MethodGet:
+			handleGetJobEmail(w, r)
+		case http.MethodPost:
+			handlePostJobEmail(w, r)
+		case http.MethodDelete:
+			handleDeleteJobEmail(w, r)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "GET, POST or DELETE required")
+		}
+		return
+	}
+
 	if r.Method == http.MethodDelete {
 		id, err := parseIDFromPath(path, "/api/jobs/")
 		if err != nil {
@@ -601,6 +616,66 @@ func handleJobActions(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("✗ Unhandled job action: %s %s", r.Method, path)
 	http.NotFound(w, r)
+}
+
+// handleGetJobEmail serves GET /api/jobs/{id}/email
+func handleGetJobEmail(w http.ResponseWriter, r *http.Request) {
+	id, err := parseIDFromPath(r.URL.Path, "/api/jobs/")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	email, err := dbGetJobEmail(id)
+	if err != nil {
+		log.Printf("✗ dbGetJobEmail(%d) error: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "failed to load email")
+		return
+	}
+	if email == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"email": nil})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"email": email})
+}
+
+// handlePostJobEmail serves POST /api/jobs/{id}/email
+func handlePostJobEmail(w http.ResponseWriter, r *http.Request) {
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	id, err := parseIDFromPath(r.URL.Path, "/api/jobs/")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	rawHTML := strings.TrimSpace(r.FormValue("raw_html"))
+	if rawHTML == "" {
+		writeError(w, http.StatusUnprocessableEntity, "raw_html is required")
+		return
+	}
+	if err := dbSaveJobEmail(id, rawHTML); err != nil {
+		log.Printf("✗ dbSaveJobEmail(%d) error: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "Failed to save email.")
+		return
+	}
+	log.Printf("✓ Email saved for job %d", id)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+// handleDeleteJobEmail serves DELETE /api/jobs/{id}/email
+func handleDeleteJobEmail(w http.ResponseWriter, r *http.Request) {
+	id, err := parseIDFromPath(r.URL.Path, "/api/jobs/")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := dbDeleteJobEmail(id); err != nil {
+		log.Printf("✗ dbDeleteJobEmail(%d) error: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "Failed to delete email.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
 // handleUpdateJobURL serves PATCH /api/jobs/{id}/url — updates or clears the

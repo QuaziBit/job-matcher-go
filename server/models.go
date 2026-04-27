@@ -11,6 +11,13 @@ type Resume struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type JobEmail struct {
+	ID        int64  `json:"id"`
+	JobID     int64  `json:"job_id"`
+	RawHTML   string `json:"raw_html"`
+	CreatedAt string `json:"created_at"`
+}
+
 type Job struct {
 	ID             int64  `json:"id"`
 	URL            string `json:"url"`

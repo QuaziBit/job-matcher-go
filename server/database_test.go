@@ -13,7 +13,7 @@ func TestInitDB_CreatesAllTables(t *testing.T) {
 	defer cleanup()
 
 	rows, err := db.Query(
-		"SELECT name FROM sqlite_master WHERE type='table' AND name IN ('jobs','resumes','analyses','applications')",
+		"SELECT name FROM sqlite_master WHERE type='table' AND name IN ('jobs','resumes','analyses','applications','job_emails')",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -26,8 +26,8 @@ func TestInitDB_CreatesAllTables(t *testing.T) {
 		rows.Scan(&name)
 		tables = append(tables, name)
 	}
-	if len(tables) != 4 {
-		t.Errorf("expected 4 tables, got %d: %v", len(tables), tables)
+	if len(tables) != 5 {
+		t.Errorf("expected 5 tables, got %d: %v", len(tables), tables)
 	}
 }
 
@@ -443,6 +443,87 @@ func TestDBApplication_GetNonExistentReturnsNil(t *testing.T) {
 		t.Error("expected nil for non-existent application")
 	}
 }
+
+
+// ── Job emails ────────────────────────────────────────────────────────────────
+
+func TestDBJobEmail_SaveAndFetch(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	jid, _ := dbInsertJob("https://example.com/em1", "Dev", "Co", "VA", "desc")
+	if err := dbSaveJobEmail(jid, "<p>Confirmed</p>"); err != nil {
+		t.Fatalf("dbSaveJobEmail failed: %v", err)
+	}
+	email, err := dbGetJobEmail(jid)
+	if err != nil || email == nil {
+		t.Fatalf("dbGetJobEmail failed: %v", err)
+	}
+	if email.RawHTML != "<p>Confirmed</p>" {
+		t.Errorf("expected raw_html, got %q", email.RawHTML)
+	}
+	if email.JobID != jid {
+		t.Errorf("expected job_id=%d, got %d", jid, email.JobID)
+	}
+}
+
+func TestDBJobEmail_ReturnsNilWhenNone(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	jid, _ := dbInsertJob("https://example.com/em2", "Dev", "Co", "VA", "desc")
+	email, err := dbGetJobEmail(jid)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if email != nil {
+		t.Error("expected nil when no email saved")
+	}
+}
+
+func TestDBJobEmail_Upserts(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	jid, _ := dbInsertJob("https://example.com/em3", "Dev", "Co", "VA", "desc")
+	dbSaveJobEmail(jid, "<p>First</p>")
+	dbSaveJobEmail(jid, "<p>Second</p>")
+
+	email, _ := dbGetJobEmail(jid)
+	if email == nil || email.RawHTML != "<p>Second</p>" {
+		t.Errorf("expected Second after upsert, got %v", email)
+	}
+}
+
+func TestDBJobEmail_DeleteRemovesEmail(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	jid, _ := dbInsertJob("https://example.com/em4", "Dev", "Co", "VA", "desc")
+	dbSaveJobEmail(jid, "<p>Email</p>")
+	if err := dbDeleteJobEmail(jid); err != nil {
+		t.Fatalf("dbDeleteJobEmail failed: %v", err)
+	}
+	email, _ := dbGetJobEmail(jid)
+	if email != nil {
+		t.Error("expected nil after delete")
+	}
+}
+
+func TestDBJobEmail_CascadesOnJobDelete(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	jid, _ := dbInsertJob("https://example.com/em5", "Dev", "Co", "VA", "desc")
+	dbSaveJobEmail(jid, "<p>Email</p>")
+	dbDeleteJob(jid)
+
+	email, _ := dbGetJobEmail(jid)
+	if email != nil {
+		t.Error("expected email cascade deleted with job")
+	}
+}
+
 
 func TestDBJobList_ReturnsAdjustedScore(t *testing.T) {
 	cleanup := setupTestDB(t)

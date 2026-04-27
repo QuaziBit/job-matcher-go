@@ -80,6 +80,14 @@ func createSchema() error {
 		notes           TEXT,
 		updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS job_emails (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		job_id     INTEGER NOT NULL UNIQUE,
+		raw_html   TEXT NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 	);`
 	_, err := db.Exec(schema)
 	return err
@@ -358,6 +366,41 @@ func dbDeleteJob(id int64) error {
 	_, err := db.Exec(`DELETE FROM jobs WHERE id = ?`, id)
 	return err
 }
+
+// ── Job email DB functions ────────────────────────────────────────────────────
+
+func dbGetJobEmail(jobID int64) (*JobEmail, error) {
+	var e JobEmail
+	var ts string
+	err := db.QueryRow(
+		`SELECT id, job_id, raw_html, created_at FROM job_emails WHERE job_id = ?`, jobID,
+	).Scan(&e.ID, &e.JobID, &e.RawHTML, &ts)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.CreatedAt = normTS(ts)
+	return &e, nil
+}
+
+func dbSaveJobEmail(jobID int64, rawHTML string) error {
+	_, err := db.Exec(
+		`INSERT INTO job_emails (job_id, raw_html)
+		 VALUES (?, ?)
+		 ON CONFLICT(job_id) DO UPDATE SET raw_html=excluded.raw_html,
+		 created_at=CURRENT_TIMESTAMP`,
+		jobID, rawHTML,
+	)
+	return err
+}
+
+func dbDeleteJobEmail(jobID int64) error {
+	_, err := db.Exec(`DELETE FROM job_emails WHERE job_id = ?`, jobID)
+	return err
+}
+
 
 func dbUpdateJobURL(id int64, url string) error {
 	_, err := db.Exec(`UPDATE jobs SET url = ? WHERE id = ?`, url, id)
