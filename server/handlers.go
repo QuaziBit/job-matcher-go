@@ -82,6 +82,8 @@ func registerRoutes(mux *http.ServeMux, cfg config.Config) {
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/job/", handleJobDetail)
 	mux.HandleFunc("/resumes", handleResumes)
+	mux.HandleFunc("/vetting", handleVettingPage)
+	mux.HandleFunc("/api/vetting", handleVettingAPI)
 
 	mux.HandleFunc("/jobs/preview", handleJobPreview)
 	mux.HandleFunc("/api/jobs/add-manual", handleAddJobManual)
@@ -168,6 +170,131 @@ func handleJobDetail(w http.ResponseWriter, r *http.Request) {
 
 func handleResumes(w http.ResponseWriter, r *http.Request) {
 	serveUIFile(w, "resumes.html")
+}
+
+func handleVettingPage(w http.ResponseWriter, r *http.Request) {
+	serveUIFile(w, "vetting.html")
+}
+
+// handleVettingAPI serves GET /api/vetting — returns all jobs grouped by
+// company and by recruiter for the vetting page.
+func handleVettingAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+
+	type VettingJob struct {
+		ID             int64  `json:"id"`
+		Title          string `json:"title"`
+		URL            string `json:"url"`
+		ScrapedAt      string `json:"scraped_at"`
+		Status         string `json:"status"`
+		RecruiterName  string `json:"recruiter_name"`
+		RecruiterEmail string `json:"recruiter_email"`
+		RecruiterPhone string `json:"recruiter_phone"`
+	}
+	type CompanyGroup struct {
+		Company string       `json:"company"`
+		Jobs    []VettingJob `json:"jobs"`
+	}
+	type RecruiterJob struct {
+		ID        int64  `json:"id"`
+		Title     string `json:"title"`
+		Company   string `json:"company"`
+		Status    string `json:"status"`
+		ScrapedAt string `json:"scraped_at"`
+	}
+	type RecruiterGroup struct {
+		Name      string         `json:"name"`
+		Email     string         `json:"email"`
+		Phone     string         `json:"phone"`
+		Companies []string       `json:"companies"`
+		Jobs      []RecruiterJob `json:"jobs"`
+	}
+
+	rows, err := db.Query(`
+		SELECT j.id, j.title, j.company, j.url, j.scraped_at,
+		       COALESCE(a.status,'not_applied'),
+		       COALESCE(a.recruiter_name,''),
+		       COALESCE(a.recruiter_email,''),
+		       COALESCE(a.recruiter_phone,'')
+		FROM jobs j
+		LEFT JOIN applications a ON a.job_id = j.id
+		ORDER BY j.company COLLATE NOCASE, j.scraped_at DESC`)
+	if err != nil {
+		log.Printf("✗ handleVettingAPI query error: %v", err)
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer rows.Close()
+
+	companyMap   := map[string]*CompanyGroup{}
+	companyOrder := []string{}
+	recruiterMap := map[string]*RecruiterGroup{}
+
+	for rows.Next() {
+		var id int64
+		var title, company, url, scrapedAt, status string
+		var rName, rEmail, rPhone string
+		if err := rows.Scan(&id, &title, &company, &url, &scrapedAt, &status, &rName, &rEmail, &rPhone); err != nil {
+			continue
+		}
+		if company == "" { company = "Unknown Company" }
+		if title   == "" { title   = "Untitled" }
+		scrapedAt = normTS(scrapedAt)
+
+		// Group by company
+		if _, ok := companyMap[company]; !ok {
+			companyMap[company] = &CompanyGroup{Company: company}
+			companyOrder = append(companyOrder, company)
+		}
+		companyMap[company].Jobs = append(companyMap[company].Jobs, VettingJob{
+			ID: id, Title: title, URL: url, ScrapedAt: scrapedAt,
+			Status: status, RecruiterName: rName, RecruiterEmail: rEmail, RecruiterPhone: rPhone,
+		})
+
+		// Group by recruiter
+		key := rEmail
+		if key == "" { key = rName }
+		if key != "" {
+			if _, ok := recruiterMap[key]; !ok {
+				recruiterMap[key] = &RecruiterGroup{
+					Name: rName, Email: rEmail, Phone: rPhone,
+					Companies: []string{},
+				}
+			}
+			r := recruiterMap[key]
+			// Add company if not already present
+			found := false
+			for _, c := range r.Companies {
+				if c == company { found = true; break }
+			}
+			if !found { r.Companies = append(r.Companies, company) }
+			r.Jobs = append(r.Jobs, RecruiterJob{
+				ID: id, Title: title, Company: company, Status: status, ScrapedAt: scrapedAt,
+			})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("✗ handleVettingAPI rows error: %v", err)
+	}
+
+	// Build ordered slices
+	companies := make([]CompanyGroup, 0, len(companyOrder))
+	for _, name := range companyOrder {
+		companies = append(companies, *companyMap[name])
+	}
+
+	recruiters := make([]RecruiterGroup, 0, len(recruiterMap))
+	for _, r := range recruiterMap {
+		recruiters = append(recruiters, *r)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"companies":  companies,
+		"recruiters": recruiters,
+	})
 }
 
 // ── Job list API (search + filter + pagination) ───────────────────────────────

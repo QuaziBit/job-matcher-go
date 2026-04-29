@@ -1103,7 +1103,8 @@ async function fetchJobs() {
 
   const clearBtn = document.getElementById('clear-btn');
   if (clearBtn) clearBtn.style.display =
-    (search || status || score || provider || addedDays || dateFrom || dateTo) ? 'inline-flex' : 'none';
+    (search || status || score || provider || addedDays || dateFrom || dateTo)
+    ? 'inline-flex' : 'none';
 
   log('fetchJobs', `page=${_currentPage} per_page=${_perPage} search=${search} status=${status} score=${score} provider=${provider}`);
   showLoading(true);
@@ -1274,7 +1275,7 @@ function clearFilters() {
    'filter-date','filter-date-from','filter-date-to'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
-  applyFilters();
+  fetchJobs();
 }
 
 
@@ -1664,7 +1665,7 @@ const TMPL = {
     const currentUrl = (!job.url || job.url.startsWith('manual://')) ? '' : job.url;
     return `
       <div style="margin-bottom: 20px;">
-        <a href="/" class="btn btn-ghost btn-sm">\u2190 Back</a>
+        <a href="${getBackUrl()}" class="btn btn-ghost btn-sm">\u2190 Back</a>
       </div>
       <div class="page-header">
         <div class="flex items-center gap-10" style="margin-bottom: 8px;">
@@ -2216,12 +2217,381 @@ const TMPL = {
 
 // ── Active nav ────────────────────────────────────────────────────────────────
 function initActiveNav() {
-  const path      = window.location.pathname;
-  const jobsEl    = document.getElementById('nav-jobs');
-  const resumesEl = document.getElementById('nav-resumes');
-  if (!jobsEl || !resumesEl) return;
-  if (path === '/resumes') resumesEl.classList.add('active');
-  else                     jobsEl.classList.add('active');
+  const path       = window.location.pathname;
+  const jobsEl     = document.getElementById('nav-jobs');
+  const vettingEl  = document.getElementById('nav-vetting');
+  const resumesEl  = document.getElementById('nav-resumes');
+  if (path === '/resumes') {
+    if (resumesEl) resumesEl.classList.add('active');
+  } else if (path === '/vetting') {
+    if (vettingEl) vettingEl.classList.add('active');
+  } else if (/^\/job\/\d+/.test(path)) {
+    // Highlight Vetting if we navigated here from the vetting page
+    try {
+      const ret = sessionStorage.getItem('vetting_return_url');
+      if (ret && ret.includes('/vetting')) {
+        if (vettingEl) vettingEl.classList.add('active');
+      } else {
+        if (jobsEl) jobsEl.classList.add('active');
+      }
+    } catch(e) {
+      if (jobsEl) jobsEl.classList.add('active');
+    }
+  } else {
+    if (jobsEl) jobsEl.classList.add('active');
+  }
+}
+
+
+// ── Vetting page ─────────────────────────────────────────────────────────────
+
+const STATUS_LABELS = {
+  not_applied:  'Not Applied',
+  applied:      'Applied',
+  interviewing: 'Interviewing',
+  offered:      'Offered',
+  rejected:     'Rejected',
+};
+
+function vettingStatusBadge(status) {
+  const label = STATUS_LABELS[status] || status || 'Not Applied';
+  return `<span class="status-badge status-${escHtml(status || 'not_applied')}">${escHtml(label)}</span>`;
+}
+
+function renderCompaniesView(companies) {
+  if (!companies.length) return TMPL.emptyPanel('No companies yet — add some jobs first.');
+  return companies.map(c => {
+    const jobCount = c.jobs.length;
+    const statuses = c.jobs.map(j => j.status || 'not_applied');
+    const applied  = statuses.filter(s => s !== 'not_applied').length;
+    const jobs     = c.jobs.map(j => `
+      <div class="flex items-center gap-10" style="padding:6px 0; border-bottom:1px solid var(--border);">
+        <a href="/job/${j.id}" onclick="saveVettingReturn()" style="flex:1; color:var(--text); font-size:13px;">${escHtml(j.title)}</a>
+        ${j.scraped_at ? `<span class="date-tag">added ${formatJobDate(j.scraped_at)}</span>` : ''}
+        ${vettingStatusBadge(j.status)}
+        ${j.recruiter_name ? `<span class="text-xs text-dim">${escHtml(j.recruiter_name)}</span>` : ''}
+      </div>`).join('');
+
+    return `
+      <div class="card" style="margin-bottom:12px;">
+        <div class="flex items-center gap-10" style="margin-bottom:${jobCount > 0 ? '10px' : '0'};">
+          <div style="flex:1;">
+            <div style="font-weight:500; font-size:15px;">${escHtml(c.company)}</div>
+            <div class="text-xs text-dim text-mono mt-4">
+              ${jobCount} job${jobCount !== 1 ? 's' : ''}
+              ${applied > 0 ? ' · ' + applied + ' applied' : ''}
+            </div>
+          </div>
+        </div>
+        ${jobs}
+      </div>`;
+  }).join('');
+}
+
+function renderRecruitersView(recruiters) {
+  if (!recruiters.length) return TMPL.emptyPanel('No recruiters yet — add recruiter info to your jobs first.');
+  return recruiters.map(r => {
+    const jobCount = r.jobs.length;
+    const jobs = r.jobs.map(j => `
+      <div class="flex items-center gap-10" style="padding:6px 0; border-bottom:1px solid var(--border);">
+        <a href="/job/${j.id}" onclick="saveVettingReturn()" style="flex:1; color:var(--text); font-size:13px;">${escHtml(j.title)}</a>
+        <span class="text-xs text-dim">${escHtml(j.company)}</span>
+        ${j.scraped_at ? `<span class="date-tag">added ${formatJobDate(j.scraped_at)}</span>` : ''}
+        ${vettingStatusBadge(j.status)}
+      </div>`).join('');
+
+    const companies = r.companies.map(c => `<span class="provider-tag">${escHtml(c)}</span>`).join(' ');
+
+    return `
+      <div class="card" style="margin-bottom:12px;">
+        <div class="flex items-center gap-10" style="margin-bottom:10px;">
+          <div style="flex:1;">
+            <div style="font-weight:500; font-size:15px;">
+              ${r.name ? escHtml(r.name) : '<span class="text-dim">Unknown Name</span>'}
+            </div>
+            <div class="text-xs text-mono mt-4" style="color:var(--amber);">
+              ${r.email ? escHtml(r.email) : ''}
+              ${r.phone ? ' · ' + escHtml(r.phone) : ''}
+            </div>
+            <div style="margin-top:6px;">${companies}</div>
+          </div>
+          <div class="text-xs text-dim text-mono">
+            ${jobCount} job${jobCount !== 1 ? 's' : ''}
+          </div>
+        </div>
+        ${jobs}
+      </div>`;
+  }).join('');
+}
+
+// ── Vetting filters + pagination ─────────────────────────────────────────────
+
+let _vettingData         = null; // cached API response
+let _vettingPageCompany  = 1;
+let _vettingPageRecruit  = 1;
+let _vettingPerPage      = 25;
+let _vettingInitialPush  = false; // track if initial pushState done
+let _vettingLastSearch   = '';
+let _vettingLastStatus   = '';
+let _vettingLastDateFrom = '';
+let _vettingLastDateTo   = '';
+
+function paginateItems(items, page) {
+  const total      = items.length;
+  const totalPages = Math.max(1, Math.ceil(total / _vettingPerPage));
+  const safePage   = Math.min(Math.max(1, page), totalPages);
+  const start      = (safePage - 1) * _vettingPerPage;
+  return { items: items.slice(start, start + _vettingPerPage), page: safePage, totalPages, total };
+}
+
+function vettingPaginationBar(page, totalPages, total, kind) {
+  if (total === 0) return '';
+  const label   = kind === 'companies' ? 'compan' : 'recruiter';
+  const plural  = kind === 'companies' ? 'ies' : 's';
+  const effPP   = _vettingPerPage === 0 ? total : _vettingPerPage;
+  const start   = ((page - 1) * effPP) + 1;
+  const end     = Math.min(page * effPP, total);
+  const selId = kind === 'companies' ? 'vetting-per-page-c' : 'vetting-per-page-r';
+  const perPageSel = `
+    <select id="${selId}" class="pagination-perpage" onchange="changeVettingPerPage(this.value)">
+      <option value="5"   ${_vettingPerPage===5  ? 'selected' : ''}>5 per page</option>
+      <option value="10"  ${_vettingPerPage===10 ? 'selected' : ''}>10 per page</option>
+      <option value="25"  ${_vettingPerPage===25 ? 'selected' : ''}>25 per page</option>
+      <option value="50"  ${_vettingPerPage===50 ? 'selected' : ''}>50 per page</option>
+      <option value="0"   ${_vettingPerPage===0  ? 'selected' : ''}>All</option>
+    </select>`;
+  if (totalPages <= 1 && _vettingPerPage !== 0) {
+    return perPageSel ? `<div class="pagination-bar" style="margin-top:14px;justify-content:flex-end;">${perPageSel}</div>` : '';
+  }
+  return `
+    <div class="pagination-bar" style="margin-top:14px;">
+      <button class="btn btn-ghost btn-sm" onclick="changeVettingPage('${kind}', -1)"
+              ${page <= 1 ? 'disabled' : ''}>← Prev</button>
+      <span class="pagination-info">Showing ${start}–${end} of ${total} ${label}${total !== 1 ? plural : (kind === 'companies' ? 'y' : '')}</span>
+      <span class="page-indicator">${totalPages > 1 ? `Page ${page} of ${totalPages}` : ''}</span>
+      <button class="btn btn-ghost btn-sm" onclick="changeVettingPage('${kind}', 1)"
+              ${page >= totalPages ? 'disabled' : ''}>Next →</button>
+      ${perPageSel}
+    </div>`;
+}
+
+function changeVettingPage(kind, dir) {
+  if (kind === 'companies') _vettingPageCompany += dir;
+  else                      _vettingPageRecruit += dir;
+  applyVettingFilters();
+}
+
+function saveVettingReturn() {
+  try {
+    sessionStorage.setItem('vetting_return_url', window.location.href);
+  } catch(e) {}
+}
+
+function getBackUrl() {
+  try {
+    const u = sessionStorage.getItem('vetting_return_url');
+    if (u && u.includes('/vetting')) {
+      sessionStorage.removeItem('vetting_return_url');
+      return u;
+    }
+  } catch(e) {}
+  return '/';
+}
+
+
+function applyVettingFilters() {
+  if (!_vettingData) return;
+  const search   = (document.getElementById('vetting-search')    || {value:''}).value.trim().toLowerCase();
+  const status   = (document.getElementById('vetting-status')    || {value:''}).value;
+  const dateFrom = (document.getElementById('vetting-date-from') || {value:''}).value;
+  const dateTo   = (document.getElementById('vetting-date-to')   || {value:''}).value;
+
+  function jobMatches(j) {
+    if (status && j.status !== status) return false;
+    if (dateFrom && j.scraped_at && j.scraped_at.slice(0,10) < dateFrom) return false;
+    if (dateTo   && j.scraped_at && j.scraped_at.slice(0,10) > dateTo)   return false;
+    return true;
+  }
+
+  const allCompanies = _vettingData.companies.map(c => {
+    const jobs = c.jobs.filter(j => {
+      if (!jobMatches(j)) return false;
+      if (!search) return true;
+      return c.company.toLowerCase().includes(search) ||
+             j.title.toLowerCase().includes(search) ||
+             (j.recruiter_name  || '').toLowerCase().includes(search) ||
+             (j.recruiter_email || '').toLowerCase().includes(search);
+    });
+    return jobs.length ? { ...c, jobs } : null;
+  }).filter(Boolean);
+
+  const allRecruiters = _vettingData.recruiters.map(r => {
+    const jobs = r.jobs.filter(j => {
+      if (!jobMatches(j)) return false;
+      if (!search) return true;
+      return (r.name  || '').toLowerCase().includes(search) ||
+             (r.email || '').toLowerCase().includes(search) ||
+             j.title.toLowerCase().includes(search) ||
+             j.company.toLowerCase().includes(search);
+    });
+    if (!jobs.length) return null;
+    const cos = [...new Set(jobs.map(j => j.company))];
+    return { ...r, jobs, companies: cos };
+  }).filter(Boolean);
+
+  // Reset to page 1 only when filter values actually changed
+  if (search   !== _vettingLastSearch   ||
+      status   !== _vettingLastStatus   ||
+      dateFrom !== _vettingLastDateFrom ||
+      dateTo   !== _vettingLastDateTo) {
+    _vettingPageCompany  = 1;
+    _vettingPageRecruit  = 1;
+    _vettingLastSearch   = search;
+    _vettingLastStatus   = status;
+    _vettingLastDateFrom = dateFrom;
+    _vettingLastDateTo   = dateTo;
+  }
+
+  const pc = paginateItems(allCompanies, _vettingPageCompany);
+  const pr = paginateItems(allRecruiters, _vettingPageRecruit);
+  _vettingPageCompany = pc.page;
+  _vettingPageRecruit = pr.page;
+
+  // Show/hide Clear button based on active filters or non-default pagination
+  const vettingClearBtn = document.getElementById('vetting-clear-btn');
+  if (vettingClearBtn) vettingClearBtn.style.display =
+    (search || status || dateFrom || dateTo)
+    ? 'inline-flex' : 'none';
+
+  const compEl = document.getElementById('vetting-companies');
+  const recEl  = document.getElementById('vetting-recruiters');
+  if (compEl) compEl.innerHTML = vettingPaginationBar(pc.page, pc.totalPages, pc.total, 'companies')  + renderCompaniesView(pc.items);
+  if (recEl)  recEl.innerHTML  = vettingPaginationBar(pr.page, pr.totalPages, pr.total, 'recruiters') + renderRecruitersView(pr.items);
+
+  // Push state to URL so browser Back restores position
+  const params = new URLSearchParams();
+  params.set('page_c',   _vettingPageCompany);
+  params.set('page_r',   _vettingPageRecruit);
+  params.set('per_page', _vettingPerPage);
+  if (search)   params.set('search',   search);
+  if (status)   params.set('status',   status);
+  if (dateFrom) params.set('date_from', dateFrom);
+  if (dateTo)   params.set('date_to',   dateTo);
+  if (!_vettingInitialPush) {
+    history.pushState({}, '', window.location.pathname + '?' + params.toString());
+    _vettingInitialPush = true;
+  } else {
+    history.replaceState({}, '', window.location.pathname + '?' + params.toString());
+  }
+}
+
+function clearVettingFilters() {
+  ['vetting-search','vetting-status','vetting-date-from','vetting-date-to'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  _vettingPageCompany  = 1;
+  _vettingPageRecruit  = 1;
+  _vettingLastSearch   = '';
+  _vettingLastStatus   = '';
+  _vettingLastDateFrom = '';
+  _vettingLastDateTo   = '';
+  applyVettingFilters();
+}
+
+function changeVettingPerPage(val) {
+  _vettingPerPage = parseInt(val) || 25;
+  _vettingPageCompany = 1;
+  _vettingPageRecruit = 1;
+  applyVettingFilters();
+}
+
+async function initVettingPage() {
+  const main = document.getElementById('vetting-main');
+  if (!main) return;
+  _vettingInitialPush  = false; // reset so first applyVettingFilters does pushState
+  _vettingLastSearch   = '';
+  _vettingLastStatus   = '';
+  _vettingLastDateFrom = '';
+  _vettingLastDateTo   = '';
+
+  main.innerHTML = `
+    <div class="page-header">
+      <h2>Vetting</h2>
+      <p>Review companies and recruiters from your saved jobs.</p>
+    </div>
+    <div class="filter-bar" style="margin-bottom:16px;">
+      <div class="search-wrap">
+        <input type="text" id="vetting-search" placeholder="Search company, job title, or recruiter…"
+               autocomplete="off" oninput="_vettingPageCompany=1;_vettingPageRecruit=1;applyVettingFilters()" />
+      </div>
+      <select id="vetting-status" onchange="_vettingPageCompany=1;_vettingPageRecruit=1;applyVettingFilters()">
+        <option value="">All Statuses</option>
+        <option value="not_applied">Not Applied</option>
+        <option value="applied">Applied</option>
+        <option value="interviewing">Interviewing</option>
+        <option value="offered">Offered</option>
+        <option value="rejected">Rejected</option>
+      </select>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <input type="date" id="vetting-date-from" title="From date"
+               onchange="_vettingPageCompany=1;_vettingPageRecruit=1;applyVettingFilters()" />
+        <span style="color:var(--text-mute); font-size:11px;">→</span>
+        <input type="date" id="vetting-date-to" title="To date"
+               onchange="_vettingPageCompany=1;_vettingPageRecruit=1;applyVettingFilters()" />
+      </div>
+      <button class="btn btn-ghost btn-sm" id="vetting-clear-btn" onclick="clearVettingFilters()" style="display:none;">\u2715 Clear</button>
+    </div>
+    <div class="tab-container" id="vetting-tabs">
+      <div class="tabs">
+        <button class="tab active" data-tab="companies">Companies</button>
+        <button class="tab" data-tab="recruiters">Recruiters</button>
+      </div>
+      <div class="tab-content active" data-tab-content="companies" id="vetting-companies">
+        ${TMPL.spinner('Loading…')}
+      </div>
+      <div class="tab-content" data-tab-content="recruiters" id="vetting-recruiters">
+        ${TMPL.spinner('Loading…')}
+      </div>
+    </div>`;
+
+  initTabs();
+
+  // Restore state from URL if present
+  const _vp = new URLSearchParams(window.location.search);
+  if (_vp.has('page_c'))   _vettingPageCompany = parseInt(_vp.get('page_c'))   || 1;
+  if (_vp.has('page_r'))   _vettingPageRecruit = parseInt(_vp.get('page_r'))   || 1;
+  if (_vp.has('per_page')) _vettingPerPage     = parseInt(_vp.get('per_page')) || 25;
+  if (_vp.has('search')) {
+    const s = document.getElementById('vetting-search');
+    if (s) s.value = _vp.get('search');
+  }
+  if (_vp.has('status')) {
+    const s = document.getElementById('vetting-status');
+    if (s) s.value = _vp.get('status');
+  }
+  if (_vp.has('date_from')) {
+    const s = document.getElementById('vetting-date-from');
+    if (s) s.value = _vp.get('date_from');
+  }
+  if (_vp.has('date_to')) {
+    const s = document.getElementById('vetting-date-to');
+    if (s) s.value = _vp.get('date_to');
+  }
+
+  try {
+    const res  = await fetch('/api/vetting');
+    _vettingData = await res.json();
+    applyVettingFilters();
+  } catch(e) {
+    logErr('initVettingPage', 'fetch threw:', e);
+    main.innerHTML = TMPL.emptyPanel('Failed to load vetting data.');
+  }
+
+  window.addEventListener('popstate', () => {
+    _vettingInitialPush = false;
+    initVettingPage();
+  });
 }
 
 
@@ -2460,7 +2830,9 @@ function renderJobDetailPage(d, providers, email) {
 document.addEventListener('DOMContentLoaded', () => {
   initActiveNav();
   const path = window.location.pathname;
-  if (path === '/resumes') {
+  if (path === '/vetting') {
+    initVettingPage();
+  } else if (path === '/resumes') {
     const form = document.getElementById('add-resume-form');
     if (form) form.addEventListener('submit', addResumeAndRefresh);
     initResumesPage();

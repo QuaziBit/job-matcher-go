@@ -1513,3 +1513,160 @@ func TestHandleJobEmail_CascadesOnJobDelete(t *testing.T) {
 		t.Error("expected email to be cascade deleted with job")
 	}
 }
+
+// ── /api/vetting ──────────────────────────────────────────────────────────────
+
+func TestHandleVettingAPI_ReturnsKeys(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/vetting", nil)
+	w := httptest.NewRecorder()
+	handleVettingAPI(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if _, ok := resp["companies"]; !ok {
+		t.Error("expected companies key")
+	}
+	if _, ok := resp["recruiters"]; !ok {
+		t.Error("expected recruiters key")
+	}
+}
+
+func TestHandleVettingAPI_EmptyDBReturnsEmptyLists(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/vetting", nil)
+	w := httptest.NewRecorder()
+	handleVettingAPI(w, req)
+
+	var resp map[string]json.RawMessage
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	var companies, recruiters []interface{}
+	json.Unmarshal(resp["companies"], &companies)
+	json.Unmarshal(resp["recruiters"], &recruiters)
+	if len(companies) != 0 {
+		t.Errorf("expected empty companies, got %d", len(companies))
+	}
+	if len(recruiters) != 0 {
+		t.Errorf("expected empty recruiters, got %d", len(recruiters))
+	}
+}
+
+func TestHandleVettingAPI_GroupsByCompany(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	dbInsertJob("https://example.com/v1", "Dev A", "Acme", "VA", "desc one for testing purposes here")
+	dbInsertJob("https://example.com/v2", "Dev B", "Acme", "VA", "desc two for testing purposes here")
+	dbInsertJob("https://example.com/v3", "Dev C", "Beta", "VA", "desc three for testing purposes here")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/vetting", nil)
+	w := httptest.NewRecorder()
+	handleVettingAPI(w, req)
+
+	var resp struct {
+		Companies []struct {
+			Company string `json:"company"`
+			Jobs    []interface{} `json:"jobs"`
+		} `json:"companies"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	var acme *struct{ Company string; Jobs []interface{} }
+	for i := range resp.Companies {
+		if resp.Companies[i].Company == "Acme" {
+			c := struct{ Company string; Jobs []interface{} }{resp.Companies[i].Company, resp.Companies[i].Jobs}
+			acme = &c
+		}
+	}
+	if acme == nil {
+		t.Fatal("expected Acme company group")
+	}
+	if len(acme.Jobs) != 2 {
+		t.Errorf("expected 2 jobs for Acme, got %d", len(acme.Jobs))
+	}
+}
+
+func TestHandleVettingAPI_GroupsRecruiterByEmail(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("https://example.com/v4", "Dev", "Acme", "VA", "desc for testing")
+	db.Exec(`INSERT INTO applications (job_id, status, recruiter_name, recruiter_email, recruiter_phone, notes)
+		VALUES (?, 'applied', 'Jane Doe', 'jane@acme.com', '', '')`, id)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/vetting", nil)
+	w := httptest.NewRecorder()
+	handleVettingAPI(w, req)
+
+	var resp struct {
+		Recruiters []struct {
+			Email string `json:"email"`
+			Jobs  []interface{} `json:"jobs"`
+		} `json:"recruiters"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	var jane *struct{ Email string; Jobs []interface{} }
+	for i := range resp.Recruiters {
+		if resp.Recruiters[i].Email == "jane@acme.com" {
+			j := struct{ Email string; Jobs []interface{} }{resp.Recruiters[i].Email, resp.Recruiters[i].Jobs}
+			jane = &j
+		}
+	}
+	if jane == nil {
+		t.Fatal("expected jane@acme.com recruiter group")
+	}
+	if len(jane.Jobs) != 1 {
+		t.Errorf("expected 1 job for jane, got %d", len(jane.Jobs))
+	}
+}
+
+func TestHandleVettingAPI_ScrapedAtInRecruiterJobs(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("https://example.com/v5", "Dev", "Acme", "VA", "desc for testing")
+	db.Exec(`INSERT INTO applications (job_id, status, recruiter_name, recruiter_email, recruiter_phone, notes)
+		VALUES (?, 'applied', 'Bob', 'bob@acme.com', '', '')`, id)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/vetting", nil)
+	w := httptest.NewRecorder()
+	handleVettingAPI(w, req)
+
+	var resp struct {
+		Recruiters []struct {
+			Email string `json:"email"`
+			Jobs  []struct {
+				ScrapedAt string `json:"scraped_at"`
+			} `json:"jobs"`
+		} `json:"recruiters"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	for _, r := range resp.Recruiters {
+		if r.Email == "bob@acme.com" {
+			if len(r.Jobs) == 0 || r.Jobs[0].ScrapedAt == "" {
+				t.Error("expected scraped_at in recruiter jobs")
+			}
+			return
+		}
+	}
+	t.Error("recruiter not found")
+}
+
+func TestHandleVettingPage_Renders(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/vetting", nil)
+	w := httptest.NewRecorder()
+	handleVettingPage(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}

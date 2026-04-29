@@ -15,6 +15,7 @@
       </div>
       <nav class="sidebar-nav">
         <a href="/" class="nav-link" id="nav-jobs"><span class="icon">⬡</span> Jobs</a>
+        <a href="/vetting" class="nav-link" id="nav-vetting"><span class="icon">🔍</span> Vetting</a>
         <a href="/resumes" class="nav-link" id="nav-resumes"><span class="icon">◈</span> Resumes</a>
       </nav>
       <div class="sidebar-footer">SQLite · Local · v5.0</div>
@@ -130,7 +131,6 @@
         </div>
         <button class="btn btn-ghost btn-sm" onclick="clearFilters()" id="clear-btn" style="display:none;">✕ Clear</button>
       </div>
-      <div id="jobs-list"></div>
       <div class="pagination-bar" id="pagination-bar" style="display:none;">
         <span class="pagination-info" id="pagination-info"></span>
         <div class="pagination-controls">
@@ -146,6 +146,7 @@
           <option value="0">All</option>
         </select>
       </div>
+      <div id="jobs-list"></div>
       <div id="jobs-loading" class="empty" style="display:none;"><div class="empty-icon">⬡</div><p>Loading…</p></div>
       <div id="jobs-error" class="jobs-error hidden">
         <div class="jobs-error-icon">✗</div>
