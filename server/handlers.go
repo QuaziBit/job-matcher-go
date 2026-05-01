@@ -741,6 +741,21 @@ func handleJobActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/title") {
+		handleUpdateJobTitle(w, r)
+		return
+	}
+
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/company") {
+		handleUpdateJobCompany(w, r)
+		return
+	}
+
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/location") {
+		handleUpdateJobLocation(w, r)
+		return
+	}
+
 	log.Printf("✗ Unhandled job action: %s %s", r.Method, path)
 	http.NotFound(w, r)
 }
@@ -850,6 +865,103 @@ func handleUpdateJobURL(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("✓ Job %d URL updated to: %s", id, newURL)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "url": newURL})
+}
+
+// handleUpdateJobTitle serves PATCH /api/jobs/{id}/title
+func handleUpdateJobTitle(w http.ResponseWriter, r *http.Request) {
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	id, err := parseIDFromPath(r.URL.Path, "/api/jobs/")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	title := strings.TrimSpace(r.FormValue("title"))
+	if title == "" {
+		writeError(w, http.StatusUnprocessableEntity, "Title cannot be empty.")
+		return
+	}
+	job, err := dbGetJobByID(id)
+	if err != nil {
+		log.Printf("✗ dbGetJobByID(%d) error: %v", id, err)
+		http.Error(w, "failed to load job", http.StatusInternalServerError)
+		return
+	}
+	if job == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := dbUpdateJobField(id, "title", title); err != nil {
+		log.Printf("✗ dbUpdateJobField title(%d) error: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "Failed to update title.")
+		return
+	}
+	log.Printf("✓ Job %d title updated to: %s", id, title)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "title": title})
+}
+
+// handleUpdateJobCompany serves PATCH /api/jobs/{id}/company
+func handleUpdateJobCompany(w http.ResponseWriter, r *http.Request) {
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	id, err := parseIDFromPath(r.URL.Path, "/api/jobs/")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	company := strings.TrimSpace(r.FormValue("company"))
+	job, err := dbGetJobByID(id)
+	if err != nil {
+		log.Printf("✗ dbGetJobByID(%d) error: %v", id, err)
+		http.Error(w, "failed to load job", http.StatusInternalServerError)
+		return
+	}
+	if job == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := dbUpdateJobField(id, "company", company); err != nil {
+		log.Printf("✗ dbUpdateJobField company(%d) error: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "Failed to update company.")
+		return
+	}
+	log.Printf("✓ Job %d company updated to: %q", id, company)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "company": company})
+}
+
+// handleUpdateJobLocation serves PATCH /api/jobs/{id}/location
+func handleUpdateJobLocation(w http.ResponseWriter, r *http.Request) {
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	id, err := parseIDFromPath(r.URL.Path, "/api/jobs/")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	location := strings.TrimSpace(r.FormValue("location"))
+	job, err := dbGetJobByID(id)
+	if err != nil {
+		log.Printf("✗ dbGetJobByID(%d) error: %v", id, err)
+		http.Error(w, "failed to load job", http.StatusInternalServerError)
+		return
+	}
+	if job == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := dbUpdateJobField(id, "location", location); err != nil {
+		log.Printf("✗ dbUpdateJobField location(%d) error: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "Failed to update location.")
+		return
+	}
+	log.Printf("✓ Job %d location updated to: %q", id, location)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "location": location})
 }
 
 func handleAnalyzeJob(w http.ResponseWriter, r *http.Request) {

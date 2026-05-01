@@ -187,6 +187,90 @@ func TestDBJob_Delete(t *testing.T) {
 		t.Error("expected job to be deleted")
 	}
 }
+
+// ── dbUpdateJobField ──────────────────────────────────────────────────────────
+
+func TestDBUpdateJobField_UpdatesTitle(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Old Title", "Co", "VA", "desc")
+	if err := dbUpdateJobField(id, "title", "New Title"); err != nil {
+		t.Fatalf("dbUpdateJobField failed: %v", err)
+	}
+	job, _ := dbGetJobByID(id)
+	if job.Title != "New Title" {
+		t.Errorf("expected 'New Title', got %q", job.Title)
+	}
+}
+
+func TestDBUpdateJobField_UpdatesCompany(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "OldCo", "VA", "desc")
+	if err := dbUpdateJobField(id, "company", "NewCo"); err != nil {
+		t.Fatalf("dbUpdateJobField failed: %v", err)
+	}
+	job, _ := dbGetJobByID(id)
+	if job.Company != "NewCo" {
+		t.Errorf("expected 'NewCo', got %q", job.Company)
+	}
+}
+
+func TestDBUpdateJobField_UpdatesLocation(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "Co", "Old Location", "desc")
+	if err := dbUpdateJobField(id, "location", "Washington, DC"); err != nil {
+		t.Fatalf("dbUpdateJobField failed: %v", err)
+	}
+	job, _ := dbGetJobByID(id)
+	if job.Location != "Washington, DC" {
+		t.Errorf("expected 'Washington, DC', got %q", job.Location)
+	}
+}
+
+func TestDBUpdateJobField_AllowsEmptyCompany(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "Acme", "VA", "desc")
+	if err := dbUpdateJobField(id, "company", ""); err != nil {
+		t.Fatalf("dbUpdateJobField failed: %v", err)
+	}
+	job, _ := dbGetJobByID(id)
+	if job.Company != "" {
+		t.Errorf("expected empty company, got %q", job.Company)
+	}
+}
+
+func TestDBUpdateJobField_AllowsEmptyLocation(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "Co", "Remote", "desc")
+	if err := dbUpdateJobField(id, "location", ""); err != nil {
+		t.Fatalf("dbUpdateJobField failed: %v", err)
+	}
+	job, _ := dbGetJobByID(id)
+	if job.Location != "" {
+		t.Errorf("expected empty location, got %q", job.Location)
+	}
+}
+
+func TestDBUpdateJobField_UnsupportedFieldReturnsError(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "Co", "VA", "desc")
+	err := dbUpdateJobField(id, "raw_description", "injected")
+	if err == nil {
+		t.Error("expected error for unsupported field, got nil")
+	}
+}
+
 // ── ScrapedAt format ──────────────────────────────────────────────────────────
 
 func TestDBJob_ScrapedAtIsNonEmpty(t *testing.T) {

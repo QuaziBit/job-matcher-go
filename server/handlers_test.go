@@ -1181,6 +1181,228 @@ func TestHandleUpdateJobURL_NotFoundReturns404(t *testing.T) {
 	}
 }
 
+// ── PATCH /api/jobs/{id}/title ─────────────────────────────────────────────
+
+func TestHandleUpdateJobTitle_SetsTitle(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Old Title", "Co", "VA", "Some job description here for testing purposes only")
+
+	body := strings.NewReader("title=New+Title")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/1/title", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/title"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["ok"] != true {
+		t.Error("expected ok:true")
+	}
+	if resp["title"] != "New Title" {
+		t.Errorf("expected title in response, got %v", resp["title"])
+	}
+	job, _ := dbGetJobByID(id)
+	if job.Title != "New Title" {
+		t.Errorf("expected DB title to be 'New Title', got %q", job.Title)
+	}
+}
+
+func TestHandleUpdateJobTitle_EmptyReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "Co", "VA", "Some job description here for testing purposes only")
+
+	body := strings.NewReader("title=")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/1/title", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/title"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422 for empty title, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdateJobTitle_NotFoundReturns404(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("title=Dev")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/99999/title", body)
+	req.URL.Path = "/api/jobs/99999/title"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for missing job, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdateJobTitle_ReflectedInDetailAPI(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Original", "Co", "VA", "Some job description here for testing purposes only")
+
+	body := strings.NewReader("title=Updated+Title")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/1/title", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/title"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	job, _ := dbGetJobByID(id)
+	if job.Title != "Updated Title" {
+		t.Errorf("detail API should reflect new title, got %q", job.Title)
+	}
+}
+
+// ── PATCH /api/jobs/{id}/company ───────────────────────────────────────────
+
+func TestHandleUpdateJobCompany_SetsCompany(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "OldCo", "VA", "Some job description here for testing purposes only")
+
+	body := strings.NewReader("company=NewCo")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/1/company", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/company"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["company"] != "NewCo" {
+		t.Errorf("expected company in response, got %v", resp["company"])
+	}
+	job, _ := dbGetJobByID(id)
+	if job.Company != "NewCo" {
+		t.Errorf("expected DB company to be 'NewCo', got %q", job.Company)
+	}
+}
+
+func TestHandleUpdateJobCompany_AllowsEmpty(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "Acme", "VA", "Some job description here for testing purposes only")
+
+	body := strings.NewReader("company=")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/1/company", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/company"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for empty company, got %d", w.Code)
+	}
+	job, _ := dbGetJobByID(id)
+	if job.Company != "" {
+		t.Errorf("expected empty company in DB, got %q", job.Company)
+	}
+}
+
+func TestHandleUpdateJobCompany_NotFoundReturns404(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("company=X")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/99999/company", body)
+	req.URL.Path = "/api/jobs/99999/company"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for missing job, got %d", w.Code)
+	}
+}
+
+// ── PATCH /api/jobs/{id}/location ──────────────────────────────────────────
+
+func TestHandleUpdateJobLocation_SetsLocation(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "Co", "Old Location", "Some job description here for testing purposes only")
+
+	body := strings.NewReader("location=Washington%2C+DC")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/1/location", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/location"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["location"] != "Washington, DC" {
+		t.Errorf("expected location in response, got %v", resp["location"])
+	}
+	job, _ := dbGetJobByID(id)
+	if job.Location != "Washington, DC" {
+		t.Errorf("expected DB location to be 'Washington, DC', got %q", job.Location)
+	}
+}
+
+func TestHandleUpdateJobLocation_AllowsEmpty(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "Co", "Remote", "Some job description here for testing purposes only")
+
+	body := strings.NewReader("location=")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/1/location", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/location"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for empty location, got %d", w.Code)
+	}
+	job, _ := dbGetJobByID(id)
+	if job.Location != "" {
+		t.Errorf("expected empty location in DB, got %q", job.Location)
+	}
+}
+
+func TestHandleUpdateJobLocation_NotFoundReturns404(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("location=X")
+	req := httptest.NewRequest(http.MethodPatch, "/api/jobs/99999/location", body)
+	req.URL.Path = "/api/jobs/99999/location"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for missing job, got %d", w.Code)
+	}
+}
+
 func TestHandleAddJobManual_WithSourceURL(t *testing.T) {
 	cleanup := setupTestDB(t)
 	defer cleanup()

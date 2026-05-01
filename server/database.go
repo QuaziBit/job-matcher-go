@@ -407,6 +407,15 @@ func dbUpdateJobURL(id int64, url string) error {
 	return err
 }
 
+func dbUpdateJobField(id int64, field string, value string) error {
+	allowed := map[string]bool{"title": true, "company": true, "location": true}
+	if !allowed[field] {
+		return fmt.Errorf("dbUpdateJobField: unsupported field %q", field)
+	}
+	_, err := db.Exec(`UPDATE jobs SET `+field+` = ? WHERE id = ?`, value, id)
+	return err
+}
+
 func dbGetJobSalaryEstimate(id int64) (string, error) {
 	var raw string
 	err := db.QueryRow(`SELECT COALESCE(salary_estimate, '') FROM jobs WHERE id = ?`, id).Scan(&raw)
