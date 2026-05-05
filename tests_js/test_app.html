@@ -1092,7 +1092,29 @@ test("multiple flags render multiple badges",() => assertEqual((redFlagBadges([{
 test("escapes HTML in reason",              () => assertNotContains(redFlagBadges([{reason:"<script>"}]), "<script>"));
 
 
-section("paginateItems");
+section("renderCrawlResults");
+
+const BASE_CRAWL = {
+  cached: false,
+  company_name: "Acme",
+  glassdoor_url: "https://glassdoor.com/acme", glassdoor_rating: 4.2, glassdoor_review_count: 1234,
+  linkedin_url: "https://linkedin.com/company/acme", linkedin_employee_count: "1200", linkedin_founded: "2010",
+  bbb_url: "https://bbb.org/acme", bbb_rating: "A+",
+};
+
+test("renders glassdoor link",          () => assertContains(renderCrawlResults(BASE_CRAWL), "glassdoor.com/acme"));
+test("renders glassdoor rating",        () => assertContains(renderCrawlResults(BASE_CRAWL), "4.2"));
+test("renders glassdoor review count",  () => assertContains(renderCrawlResults(BASE_CRAWL), "1,234"));
+test("renders linkedin link",           () => assertContains(renderCrawlResults(BASE_CRAWL), "linkedin.com/company/acme"));
+test("renders employee count",          () => assertContains(renderCrawlResults(BASE_CRAWL), "1200 employees"));
+test("renders founded year",            () => assertContains(renderCrawlResults(BASE_CRAWL), "2010"));
+test("renders bbb grade",               () => assertContains(renderCrawlResults(BASE_CRAWL), "A+"));
+test("shows 'just crawled' when not cached", () => assertContains(renderCrawlResults(BASE_CRAWL), "just crawled"));
+test("shows 'cached' when cached",      () => assertContains(renderCrawlResults({...BASE_CRAWL, cached:true}), "cached"));
+test("no results message when all empty",() => assertContains(renderCrawlResults({cached:false, company_name:"Ghost"}), "No results found"));
+test("partial results render fine",     () => { const r = renderCrawlResults({...BASE_CRAWL, linkedin_url:""}); assertContains(r, "glassdoor.com"); assertNotContains(r, "linkedin.com/company"); });
+test("links open in new tab",           () => assertContains(renderCrawlResults(BASE_CRAWL), 'target="_blank"'));
+test("escapes XSS in rating",           () => assertNotContains(renderCrawlResults({...BASE_CRAWL, bbb_rating:"<script>"}), "<script>"));
 
 test("returns all items when under limit",   () => { const r = paginateItems([1,2,3], 1); assertEqual(r.items.length, 3); assertEqual(r.totalPages, 1); });
 test("paginates correctly on page 1",        () => { const items = Array.from({length:30}, (_,i) => i); const r = paginateItems(items, 1); assertEqual(r.items.length, 25); assertEqual(r.page, 1); });

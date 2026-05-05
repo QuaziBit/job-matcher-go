@@ -88,6 +88,20 @@ func createSchema() error {
 		raw_html   TEXT NOT NULL,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS company_meta (
+		id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+		company_name           TEXT NOT NULL UNIQUE,
+		glassdoor_url          TEXT DEFAULT '',
+		glassdoor_rating       REAL DEFAULT NULL,
+		glassdoor_review_count INTEGER DEFAULT NULL,
+		linkedin_url           TEXT DEFAULT '',
+		linkedin_employee_count TEXT DEFAULT '',
+		linkedin_founded       TEXT DEFAULT '',
+		bbb_url                TEXT DEFAULT '',
+		bbb_rating             TEXT DEFAULT '',
+		crawled_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);`
 	_, err := db.Exec(schema)
 	return err
@@ -644,4 +658,70 @@ func parseMissingSkills(raw string) []MissingSkill {
 		}
 	}
 	return result
+}
+
+// ── company_meta ──────────────────────────────────────────────────────────────
+
+// CompanyMeta holds cached crawl results for a company.
+type CompanyMeta struct {
+	CompanyName          string  `json:"company_name"`
+	GlassdoorURL         string  `json:"glassdoor_url"`
+	GlassdoorRating      float64 `json:"glassdoor_rating"`
+	GlassdoorReviewCount int     `json:"glassdoor_review_count"`
+	LinkedInURL          string  `json:"linkedin_url"`
+	LinkedInEmployees    string  `json:"linkedin_employee_count"`
+	LinkedInFounded      string  `json:"linkedin_founded"`
+	BBBURL               string  `json:"bbb_url"`
+	BBBRating            string  `json:"bbb_rating"`
+	CrawledAt            string  `json:"crawled_at"`
+}
+
+func dbGetCompanyMeta(companyName string) (*CompanyMeta, error) {
+	row := db.QueryRow(`
+		SELECT company_name,
+		       COALESCE(glassdoor_url,''), COALESCE(glassdoor_rating,0), COALESCE(glassdoor_review_count,0),
+		       COALESCE(linkedin_url,''), COALESCE(linkedin_employee_count,''), COALESCE(linkedin_founded,''),
+		       COALESCE(bbb_url,''), COALESCE(bbb_rating,''),
+		       COALESCE(crawled_at,'')
+		FROM company_meta WHERE company_name = ?`, companyName)
+	var m CompanyMeta
+	err := row.Scan(
+		&m.CompanyName,
+		&m.GlassdoorURL, &m.GlassdoorRating, &m.GlassdoorReviewCount,
+		&m.LinkedInURL, &m.LinkedInEmployees, &m.LinkedInFounded,
+		&m.BBBURL, &m.BBBRating,
+		&m.CrawledAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+func dbUpsertCompanyMeta(companyName string, r CompanyCrawlResult) error {
+	_, err := db.Exec(`
+		INSERT INTO company_meta
+			(company_name, glassdoor_url, glassdoor_rating, glassdoor_review_count,
+			 linkedin_url, linkedin_employee_count, linkedin_founded,
+			 bbb_url, bbb_rating, crawled_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(company_name) DO UPDATE SET
+			glassdoor_url          = excluded.glassdoor_url,
+			glassdoor_rating       = excluded.glassdoor_rating,
+			glassdoor_review_count = excluded.glassdoor_review_count,
+			linkedin_url           = excluded.linkedin_url,
+			linkedin_employee_count = excluded.linkedin_employee_count,
+			linkedin_founded       = excluded.linkedin_founded,
+			bbb_url                = excluded.bbb_url,
+			bbb_rating             = excluded.bbb_rating,
+			crawled_at             = CURRENT_TIMESTAMP`,
+		companyName,
+		r.GlassdoorURL, r.GlassdoorRating, r.GlassdoorReviewCount,
+		r.LinkedInURL, r.LinkedInEmployees, r.LinkedInFounded,
+		r.BBBURL, r.BBBRating,
+	)
+	return err
 }

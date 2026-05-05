@@ -98,6 +98,8 @@ func registerRoutes(mux *http.ServeMux, cfg config.Config) {
 	mux.HandleFunc("/api/resumes/", handleResumeActions)
 	mux.HandleFunc("/api/ollama/models", handleOllamaModels)
 	mux.HandleFunc("/api/providers/models", handleProviderModels)
+	mux.HandleFunc("/api/companies/crawl", handleCompanyCrawl)
+	mux.HandleFunc("/api/companies/meta", handleCompanyMeta)
 	mux.HandleFunc("/api/providers/status", handleProvidersStatus)
 	mux.HandleFunc("/shutdown", handleShutdown)
 }
@@ -1693,4 +1695,101 @@ func handleShutdown(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+}
+
+// ── Company crawl ─────────────────────────────────────────────────────────────
+
+// handleCompanyCrawl serves POST /api/companies/crawl
+func handleCompanyCrawl(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	companyName := strings.TrimSpace(r.FormValue("company_name"))
+	if companyName == "" {
+		writeError(w, http.StatusUnprocessableEntity, "company_name is required.")
+		return
+	}
+
+	// Return cached result if fresh (within 7 days)
+	cached, err := dbGetCompanyMeta(companyName)
+	if err != nil {
+		log.Printf("✗ dbGetCompanyMeta(%q): %v", companyName, err)
+	}
+	if cached != nil && cached.CrawledAt != "" {
+		t, err := time.Parse("2006-01-02 15:04:05", cached.CrawledAt)
+		if err == nil && time.Since(t) < 7*24*time.Hour {
+			log.Printf("✓ Returning cached company_meta for: %q", companyName)
+			writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "cached": true, "data": cached})
+			return
+		}
+	}
+
+	log.Printf("→ Crawling company: %q", companyName)
+	result := CrawlCompany(companyName)
+
+	if err := dbUpsertCompanyMeta(companyName, result); err != nil {
+		log.Printf("✗ dbUpsertCompanyMeta(%q): %v", companyName, err)
+	}
+
+	fresh, _ := dbGetCompanyMeta(companyName)
+	if fresh == nil {
+		fresh = &CompanyMeta{CompanyName: companyName}
+	}
+	log.Printf("✓ Crawl complete for: %q", companyName)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":                     true,
+		"cached":                 false,
+		"company_name":           fresh.CompanyName,
+		"glassdoor_url":          fresh.GlassdoorURL,
+		"glassdoor_rating":       fresh.GlassdoorRating,
+		"glassdoor_review_count": fresh.GlassdoorReviewCount,
+		"linkedin_url":           fresh.LinkedInURL,
+		"linkedin_employee_count": fresh.LinkedInEmployees,
+		"linkedin_founded":       fresh.LinkedInFounded,
+		"bbb_url":                fresh.BBBURL,
+		"bbb_rating":             fresh.BBBRating,
+		"crawled_at":             fresh.CrawledAt,
+	})
+}
+
+// handleCompanyMeta serves GET /api/companies/meta?company_name=...
+func handleCompanyMeta(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	companyName := strings.TrimSpace(r.URL.Query().Get("company_name"))
+	if companyName == "" {
+		writeError(w, http.StatusUnprocessableEntity, "company_name is required.")
+		return
+	}
+	meta, err := dbGetCompanyMeta(companyName)
+	if err != nil {
+		log.Printf("✗ dbGetCompanyMeta(%q): %v", companyName, err)
+		writeError(w, http.StatusInternalServerError, "DB error")
+		return
+	}
+	if meta == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "cached": false, "company_name": companyName})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":                     true,
+		"cached":                 true,
+		"company_name":           meta.CompanyName,
+		"glassdoor_url":          meta.GlassdoorURL,
+		"glassdoor_rating":       meta.GlassdoorRating,
+		"glassdoor_review_count": meta.GlassdoorReviewCount,
+		"linkedin_url":           meta.LinkedInURL,
+		"linkedin_employee_count": meta.LinkedInEmployees,
+		"linkedin_founded":       meta.LinkedInFounded,
+		"bbb_url":                meta.BBBURL,
+		"bbb_rating":             meta.BBBRating,
+		"crawled_at":             meta.CrawledAt,
+	})
 }

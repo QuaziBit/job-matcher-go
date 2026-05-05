@@ -1267,3 +1267,82 @@ func TestDBAnalysis_EmptySuggestionsHandled(t *testing.T) {
 		t.Errorf("expected 0 suggestions, got %d", len(results[0].Suggestions))
 	}
 }
+
+// ── dbUpsertCompanyMeta / dbGetCompanyMeta ────────────────────────────────────
+
+func TestDBUpsertCompanyMeta_StoresAndRetrieves(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	result := CompanyCrawlResult{
+		LinkedInURL:  "https://linkedin.com/company/acme",
+		BBBURL:       "https://bbb.org/acme",
+		BBBRating:    "A+",
+	}
+	if err := dbUpsertCompanyMeta("Acme Corp", result); err != nil {
+		t.Fatalf("upsert failed: %v", err)
+	}
+	meta, err := dbGetCompanyMeta("Acme Corp")
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected meta, got nil")
+	}
+	if meta.LinkedInURL != "https://linkedin.com/company/acme" {
+		t.Errorf("expected linkedin_url, got %q", meta.LinkedInURL)
+	}
+	if meta.BBBRating != "A+" {
+		t.Errorf("expected bbb_rating A+, got %q", meta.BBBRating)
+	}
+}
+
+func TestDBGetCompanyMeta_ReturnsNilForUnknown(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	meta, err := dbGetCompanyMeta("Ghost Corp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta != nil {
+		t.Errorf("expected nil, got %+v", meta)
+	}
+}
+
+func TestDBUpsertCompanyMeta_UpdatesExistingRow(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	first := CompanyCrawlResult{BBBRating: "B", BBBURL: "https://bbb.org/acme"}
+	if err := dbUpsertCompanyMeta("Acme", first); err != nil {
+		t.Fatalf("first upsert failed: %v", err)
+	}
+	second := CompanyCrawlResult{BBBRating: "A", BBBURL: "https://bbb.org/acme-v2", LinkedInURL: "https://linkedin.com/company/acme"}
+	if err := dbUpsertCompanyMeta("Acme", second); err != nil {
+		t.Fatalf("second upsert failed: %v", err)
+	}
+	meta, _ := dbGetCompanyMeta("Acme")
+	if meta.BBBRating != "A" {
+		t.Errorf("expected updated rating 'A', got %q", meta.BBBRating)
+	}
+	if meta.LinkedInURL != "https://linkedin.com/company/acme" {
+		t.Errorf("expected linkedin_url, got %q", meta.LinkedInURL)
+	}
+}
+
+func TestDBUpsertCompanyMeta_EmptyResultStoresRow(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	if err := dbUpsertCompanyMeta("Empty Corp", CompanyCrawlResult{}); err != nil {
+		t.Fatalf("upsert of empty result failed: %v", err)
+	}
+	meta, err := dbGetCompanyMeta("Empty Corp")
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected row even for empty crawl result")
+	}
+}

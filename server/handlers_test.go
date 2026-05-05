@@ -1892,3 +1892,149 @@ func TestHandleVettingPage_Renders(t *testing.T) {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
 }
+
+// ── POST /api/companies/crawl ──────────────────────────────────────────────
+
+func TestHandleCompanyCrawl_EmptyNameReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("company_name=")
+	req := httptest.NewRequest(http.MethodPost, "/api/companies/crawl", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleCompanyCrawl(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleCompanyCrawl_WrongMethodReturns404(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/companies/crawl", nil)
+	w := httptest.NewRecorder()
+	handleCompanyCrawl(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestHandleCompanyCrawl_StoresAndReturnsResult(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Pre-seed company_meta directly to avoid real HTTP calls
+	result := CompanyCrawlResult{
+		LinkedInURL: "https://linkedin.com/company/acme",
+		BBBURL:      "https://bbb.org/acme",
+		BBBRating:   "A+",
+	}
+	if err := dbUpsertCompanyMeta("Acme Corp", result); err != nil {
+		t.Fatalf("dbUpsertCompanyMeta failed: %v", err)
+	}
+
+	body := strings.NewReader("company_name=Acme+Corp")
+	req := httptest.NewRequest(http.MethodPost, "/api/companies/crawl", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleCompanyCrawl(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["ok"] != true {
+		t.Error("expected ok:true")
+	}
+	// Should return cached since we just seeded it
+	if resp["cached"] != true {
+		t.Error("expected cached:true on second call")
+	}}
+
+func TestHandleCompanyCrawl_ReturnsCachedOnSecondCall(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	result := CompanyCrawlResult{BBBRating: "B", BBBURL: "https://bbb.org/test"}
+	if err := dbUpsertCompanyMeta("Cache Test LLC", result); err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		body := strings.NewReader("company_name=Cache+Test+LLC")
+		req := httptest.NewRequest(http.MethodPost, "/api/companies/crawl", body)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		handleCompanyCrawl(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("call %d: expected 200, got %d", i+1, w.Code)
+		}
+		var resp map[string]interface{}
+		json.NewDecoder(w.Body).Decode(&resp)
+		if resp["cached"] != true {
+			t.Errorf("call %d: expected cached:true", i+1)
+		}
+	}
+}
+
+// ── GET /api/companies/meta ────────────────────────────────────────────────
+
+func TestHandleCompanyMeta_NotFoundReturnsCachedFalse(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/companies/meta?company_name=Nobody+Corp", nil)
+	w := httptest.NewRecorder()
+	handleCompanyMeta(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["cached"] != false {
+		t.Error("expected cached:false for unknown company")
+	}
+}
+
+func TestHandleCompanyMeta_AfterCrawlReturnsCachedTrue(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	result := CompanyCrawlResult{LinkedInURL: "https://linkedin.com/company/meta-test"}
+	if err := dbUpsertCompanyMeta("Meta Test Inc", result); err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/companies/meta?company_name=Meta+Test+Inc", nil)
+	w := httptest.NewRecorder()
+	handleCompanyMeta(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["cached"] != true {
+		t.Error("expected cached:true after upsert")
+	}
+}
+
+func TestHandleCompanyMeta_EmptyNameReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/companies/meta", nil)
+	w := httptest.NewRecorder()
+	handleCompanyMeta(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
