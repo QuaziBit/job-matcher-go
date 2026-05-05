@@ -1724,7 +1724,20 @@ func handleCompanyCrawl(w http.ResponseWriter, r *http.Request) {
 		t, err := time.Parse("2006-01-02 15:04:05", cached.CrawledAt)
 		if err == nil && time.Since(t) < 7*24*time.Hour {
 			log.Printf("✓ Returning cached company_meta for: %q", companyName)
-			writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "cached": true, "data": cached})
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"ok":                      true,
+				"cached":                  true,
+				"company_name":            cached.CompanyName,
+				"glassdoor_url":           cached.GlassdoorURL,
+				"glassdoor_rating":        cached.GlassdoorRating,
+				"glassdoor_review_count":  cached.GlassdoorReviewCount,
+				"linkedin_url":            cached.LinkedInURL,
+				"linkedin_employee_count": cached.LinkedInEmployees,
+				"linkedin_founded":        cached.LinkedInFounded,
+				"bbb_url":                 cached.BBBURL,
+				"bbb_rating":              cached.BBBRating,
+				"crawled_at":              cached.CrawledAt,
+			})
 			return
 		}
 	}
