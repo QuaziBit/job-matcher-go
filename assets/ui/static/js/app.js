@@ -1417,8 +1417,14 @@ async function estimateSalary(jobId) {
   if (btn) { btn.disabled = true; btn.innerHTML = TMPL.spinner('Estimating\u2026'); }
 
   const provider = document.querySelector('input[name="provider"]:checked')?.value || 'anthropic';
+  const ollamaModelEl = document.getElementById('ollama-model-select');
+  const cloudModelEl  = document.getElementById('cloud-model-select');
+  const selectedModel = provider === 'ollama'
+    ? (ollamaModelEl?.value || '')
+    : (cloudModelEl?.value || '');
   const fd = new FormData();
   fd.append('provider', provider);
+  if (selectedModel) fd.append('model', selectedModel);
 
   try {
     const res  = await fetch(`/api/jobs/${jobId}/estimate-salary`, { method: 'POST', body: fd });
@@ -1457,8 +1463,14 @@ async function rerunSalaryEstimate(jobId) {
   catch(e) { logErr('rerunSalaryEstimate', 'DELETE threw:', e); }
 
   const provider = document.querySelector('input[name="provider"]:checked')?.value || 'anthropic';
+  const ollamaModelEl = document.getElementById('ollama-model-select');
+  const cloudModelEl  = document.getElementById('cloud-model-select');
+  const selectedModel = provider === 'ollama'
+    ? (ollamaModelEl?.value || '')
+    : (cloudModelEl?.value || '');
   const fd = new FormData();
   fd.append('provider', provider);
+  if (selectedModel) fd.append('model', selectedModel);
 
   try {
     const res  = await fetch(`/api/jobs/${jobId}/estimate-salary`, { method: 'POST', body: fd });
@@ -2465,8 +2477,12 @@ async function crawlCompany(companyName, safeId) {
 function renderCrawlResults(data) {
   const sources = [
     { label: 'Glassdoor', url: data.glassdoor_url, extra: data.glassdoor_rating ? `⭐ ${data.glassdoor_rating}` + (data.glassdoor_review_count ? ` (${data.glassdoor_review_count.toLocaleString()} reviews)` : '') : '' },
+    { label: 'Indeed',    url: data.indeed_url,    extra: data.indeed_rating    ? `⭐ ${data.indeed_rating}`    + (data.indeed_review_count    ? ` (${data.indeed_review_count.toLocaleString()} reviews)`    : '') : '' },
     { label: 'LinkedIn',  url: data.linkedin_url,  extra: [data.linkedin_employee_count ? `👥 ${data.linkedin_employee_count} employees` : '', data.linkedin_founded ? `est. ${data.linkedin_founded}` : ''].filter(Boolean).join(' · ') },
-    { label: 'BBB',       url: data.bbb_url,       extra: data.bbb_rating ? `Grade: ${data.bbb_rating}` : '' },
+    { label: 'Crunchbase',url: data.crunchbase_url,extra: [data.crunchbase_founded ? `est. ${data.crunchbase_founded}` : '', data.crunchbase_funding ? `💰 ${data.crunchbase_funding}` : ''].filter(Boolean).join(' · ') },
+    { label: 'Trustpilot',url: data.trustpilot_url,extra: data.trustpilot_rating ? `⭐ ${data.trustpilot_rating}` : '' },
+    { label: 'G2',        url: data.g2_url,        extra: data.g2_rating        ? `⭐ ${data.g2_rating}`        : '' },
+    { label: 'BBB',       url: data.bbb_url,       extra: data.bbb_rating       ? `Grade: ${data.bbb_rating}`  : '' },
   ];
 
   const found = sources.filter(s => s.url);

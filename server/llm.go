@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -84,11 +85,7 @@ func analyzeWithAnthropic(resume, jobDescription string, cfg config.Config) (Ana
 	}
 	log.Printf("✓ Anthropic response: score=%d adjusted=%d", analysis.Score, analysis.AdjustedScore)
 	if showMoreLogs() {
-		preview := result.Content[0].Text
-		if len(preview) > 800 {
-			preview = preview[:800]
-		}
-		log.Printf("→ Anthropic raw body:\n%s", preview)
+		log.Printf("→ Anthropic raw body:\n%s", result.Content[0].Text)
 	}
 	analysis.LLMProvider = "anthropic"
 	analysis.LLMModel = model
@@ -96,11 +93,56 @@ func analyzeWithAnthropic(resume, jobDescription string, cfg config.Config) (Ana
 	return analysis, nil
 }
 
-// analyzeWithOllama delegates to callOllamaChunked which splits the request into
-// 3-4 focused chunks instead of one large prompt.
+// stripThinking removes Ollama thinking-model preamble from raw response.
+// Gemma 4 and other thinking models prepend "Thinking Process:..." blocks
+// before the actual JSON output. Also strips <think>...</think> blocks.
+func stripThinking(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	// Strip <think>...</think> blocks
+	thinkRe := regexp.MustCompile(`(?s)<think>.*?</think>`)
+	raw = thinkRe.ReplaceAllString(raw, "")
+
+	// Strip "Thinking Process:" narrative — everything up to the first { or [
+	firstJSON := strings.IndexAny(raw, "{[")
+	if firstJSON > 0 {
+		preamble := raw[:firstJSON]
+		markers := []string{"Thinking Process", "thinking process", "Let me analyze", "I need to", "Here's a thinking"}
+		for _, m := range markers {
+			if strings.Contains(preamble, m) {
+				raw = raw[firstJSON:]
+				break
+			}
+		}
+	}
+	return strings.TrimSpace(raw)
+}
+
+// ollamaMessageContent extracts the response text from an Ollama /api/chat
+// response, falling back to the thinking field for thinking models.
+func ollamaMessageContent(body []byte) (content, thinking string) {
+	var result struct {
+		Message struct {
+			Content  string `json:"content"`
+			Thinking string `json:"thinking"`
+		} `json:"message"`
+	}
+	_ = json.Unmarshal(body, &result)
+	return result.Message.Content, result.Message.Thinking
+}
+
+// analyzeWithOllama routes to the appropriate Ollama path based on model type.
 func analyzeWithOllama(resume, jobDescription string, cfg config.Config) (Analysis, error) {
 	log.Printf("→ Calling Ollama API (model: %s url: %s)", cfg.OllamaModel, cfg.OllamaBaseURL)
-	analysis, err := callOllamaChunked(resume, jobDescription, cfg)
+	var analysis Analysis
+	var err error
+	if isThinkingModel(cfg.OllamaModel) {
+		log.Printf("→ Routing thinking model %q to thinking path", cfg.OllamaModel)
+		analysis, err = callOllamaThinking(resume, jobDescription, cfg)
+	} else {
+		analysis, err = callOllamaChunked(resume, jobDescription, cfg)
+	}
 	if err != nil {
 		return Analysis{}, err
 	}
@@ -108,6 +150,142 @@ func analyzeWithOllama(resume, jobDescription string, cfg config.Config) (Analys
 	analysis.LLMProvider = "ollama"
 	analysis.LLMModel = cfg.OllamaModel
 	return analysis, nil
+}
+
+// ── Thinking model Ollama implementation ─────────────────────────────────────
+
+// callOllamaThinking runs two focused calls for thinking models (Gemma 4,
+// DeepSeek-R1, etc.) that stop generating JSON early when given a large schema.
+// Call A: score + reasoning + matched_skills
+// Call B: missing_skills + suggestions
+func callOllamaThinking(resume, jd string, cfg config.Config) (Analysis, error) {
+	effectiveMode := capModeForModel(cfg.AnalysisMode, cfg.OllamaModel)
+	mcfg := getModeConfigFor(effectiveMode)
+	model := cfg.OllamaModel
+	baseURL := cfg.OllamaBaseURL
+	timeout := time.Duration(cfg.OllamaTimeoutSeconds) * time.Second
+	if timeout == 0 {
+		timeout = 600 * time.Second
+	}
+
+	snippetLen := 60
+	maxMatched := 10
+	maxMissing := 7
+
+	log.Printf("→ thinking mode=%s model=%s max_matched=%d max_missing=%d",
+		effectiveMode, model, maxMatched, maxMissing)
+
+	thinkingPrefix := "CRITICAL INSTRUCTION: Your entire response must be a single valid JSON object. " +
+		"Do NOT write any prose, markdown, headers, or explanations. " +
+		"Start your response with '{' and end with '}'. Nothing else.\n\n"
+
+	userMsg := buildUserPrompt(resume, jd) +
+		"\n\nRemember: respond with ONLY a JSON object starting with '{'. No prose."
+
+	sysA := fmt.Sprintf("%sYou are an expert technical recruiter. Evaluate resume vs job description.\n\n"+
+		"Return ONLY this JSON with at most %d matched skills:\n"+
+		`{"score": <1-5>, "reasoning": "<2 sentences>", `+
+		`"matched_skills": [{"skill": "...", "match_type": "exact|partial|inferred", `+
+		`"jd_snippet": "<%d chars max>", "resume_snippet": "<%d chars max>"}]}`,
+		thinkingPrefix, maxMatched, snippetLen, snippetLen)
+
+	sysB := fmt.Sprintf("%sYou are an expert technical recruiter. Evaluate resume vs job description.\n\n"+
+		"Return ONLY this JSON with at most %d missing skills and 3 suggestions:\n"+
+		`{"missing_skills": [{"skill": "...", "severity": "blocker|major|minor", `+
+		`"requirement_type": "hard|preferred|bonus", "jd_snippet": "<%d chars max>"}], `+
+		`"suggestions": [{"title": "...", "detail": "..."}]}`,
+		thinkingPrefix, maxMissing, snippetLen)
+
+	doCall := func(sysPrompt, callName string) (string, string, error) {
+		payload := map[string]interface{}{
+			"model": model,
+			"messages": []map[string]string{
+				{"role": "system", "content": sysPrompt},
+				{"role": "user", "content": userMsg},
+			},
+			"stream":  false,
+			"format":  "json",
+			"options": map[string]interface{}{"temperature": 0.2, "num_predict": 2000, "think": false},
+		}
+		body, _ := json.Marshal(payload)
+		req, err := http.NewRequest("POST", baseURL+"/api/chat", bytes.NewReader(body))
+		if err != nil {
+			return "", "", fmt.Errorf("thinking %s: build request: %w", callName, err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		client := &http.Client{Timeout: timeout}
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", "", fmt.Errorf("thinking %s: request failed: %w", callName, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			b, _ := io.ReadAll(resp.Body)
+			return "", "", fmt.Errorf("thinking %s: Ollama error %d: %s", callName, resp.StatusCode, string(b))
+		}
+		respBody, _ := io.ReadAll(resp.Body)
+		cnt, thinking := ollamaMessageContent(respBody)
+		raw := stripThinking(cnt)
+		log.Printf("→ thinking call %s: %d chars  thinking=%d chars", callName, len(raw), len(thinking))
+		if showMoreLogs() {
+			log.Printf("→ thinking call %s body:\n%s", callName, raw)
+			if thinking != "" {
+				log.Printf("→ thinking call %s reasoning:\n%s", callName, thinking)
+			}
+		}
+		return raw, thinking, nil
+	}
+
+	rawA, _, err := doCall(sysA, "A")
+	if err != nil {
+		return Analysis{}, err
+	}
+	rawB, _, _ := doCall(sysB, "B") // B failure is non-fatal
+
+	// Parse A — score + matched_skills
+	score, reasoning, err := parseScoreChunk(rawA)
+	if err != nil {
+		return Analysis{}, fmt.Errorf("thinking call A parse failed: %w", err)
+	}
+
+	var matchedItems []json.RawMessage
+	if items, perr := parseChunkArray(rawA, "matched_skills", "A/matched"); perr == nil {
+		matchedItems = items
+	}
+
+	// Parse B — missing_skills + suggestions
+	var missingItems []json.RawMessage
+	var suggestItems []json.RawMessage
+	if rawB != "" {
+		if items, perr := parseChunkArray(rawB, "missing_skills", "B/missing"); perr == nil {
+			missingItems = items
+		}
+		if mcfg.Suggestions {
+			if items, perr := parseChunkArray(rawB, "suggestions", "B/suggestions"); perr == nil {
+				suggestItems = items
+			}
+		}
+	}
+
+	matched := buildMatchedSkills(matchedItems, mcfg)
+	missing := buildMissingSkills(missingItems, jd, mcfg)
+	adjusted, breakdown := computeAdjustedScore(score, missing)
+
+	var suggestions []ResumeSuggestion
+	if mcfg.Suggestions {
+		suggestions = buildSuggestions(suggestItems)
+	}
+
+	return Analysis{
+		Score:            score,
+		AdjustedScore:    adjusted,
+		Reasoning:        reasoning,
+		MatchedSkills:    matched,
+		MissingSkills:    missing,
+		Suggestions:      suggestions,
+		PenaltyBreakdown: breakdown,
+		AnalysisMode:     effectiveMode,
+	}, nil
 }
 
 // ── Chunked Ollama implementation ─────────────────────────────────────────────
@@ -123,7 +301,7 @@ func callChunk(sysPrompt, userPrompt, model, baseURL string, numPredict int, chu
 			{"role": "user", "content": userPrompt},
 		},
 		"stream":  false,
-		"options": map[string]interface{}{"temperature": 0.2, "num_predict": numPredict},
+		"options": map[string]interface{}{"temperature": 0.2, "num_predict": numPredict, "think": false},
 	}
 	body, _ := json.Marshal(payload)
 
@@ -145,23 +323,20 @@ func callChunk(sysPrompt, userPrompt, model, baseURL string, numPredict int, chu
 		return "", fmt.Errorf("chunk %s: Ollama error %d: %s", chunkName, resp.StatusCode, string(b))
 	}
 
-	var result struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
+	respBody, _ := io.ReadAll(resp.Body)
+	content, thinking := ollamaMessageContent(respBody)
+	raw := content
+	if raw == "" {
+		raw = thinking
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("chunk %s: decode failed: %w", chunkName, err)
-	}
+	raw = stripThinking(raw)
 
-	raw := result.Message.Content
 	log.Printf("→ chunk %s: %d chars", chunkName, len(raw))
 	if showMoreLogs() {
-		preview := raw
-		if len(preview) > 800 {
-			preview = preview[:800]
+		log.Printf("→ chunk %s raw body:\n%s", chunkName, raw)
+		if thinking != "" {
+			log.Printf("→ chunk %s reasoning:\n%s", chunkName, thinking)
 		}
-		log.Printf("→ chunk %s raw body:\n%s", chunkName, preview)
 	}
 	return raw, nil
 }
@@ -412,11 +587,7 @@ func analyzeWithOpenAI(resume, jobDescription string, cfg config.Config) (Analys
 	}
 	log.Printf("✓ OpenAI response: score=%d adjusted=%d", analysis.Score, analysis.AdjustedScore)
 	if showMoreLogs() {
-		preview := result.Choices[0].Message.Content
-		if len(preview) > 800 {
-			preview = preview[:800]
-		}
-		log.Printf("→ OpenAI raw body:\n%s", preview)
+		log.Printf("→ OpenAI raw body:\n%s", result.Choices[0].Message.Content)
 	}
 	analysis.LLMProvider = "openai"
 	analysis.LLMModel = model
@@ -505,11 +676,7 @@ func analyzeWithGemini(resume, jobDescription string, cfg config.Config) (Analys
 	}
 	log.Printf("✓ Gemini response: score=%d adjusted=%d", analysis.Score, analysis.AdjustedScore)
 	if showMoreLogs() {
-		preview := text
-		if len(preview) > 800 {
-			preview = preview[:800]
-		}
-		log.Printf("→ Gemini raw body:\n%s", preview)
+		log.Printf("→ Gemini raw body:\n%s", text)
 	}
 	analysis.LLMProvider = "gemini"
 	analysis.LLMModel = model

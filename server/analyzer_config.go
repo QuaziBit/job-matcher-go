@@ -51,9 +51,49 @@ var modelMaxMode = map[string]string{
 	"llama3.1:8b":     "detailed",
 	"llama3.3:70b":    "detailed",
 	"gemma3:27b":      "detailed",
+	"gemma3n:e4b":     "detailed",
+	"gemma4:e2b":      "detailed",
+	"gemma4:e4b":      "detailed",
+	"gemma4:26b":      "detailed",
+	"gemma4:31b":      "detailed",
 	"mixtral:8x7b":    "detailed",
 	"deepseek-r1:14b": "detailed",
 	"qwen2.5:14b":     "detailed",
+}
+
+// thinkingModels is the set of Ollama models that use a built-in reasoning
+// phase before producing output. These require the two-call thinking path
+// instead of the standard chunked path.
+var thinkingModels = map[string]bool{
+	"gemma4:e2b":        true,
+	"gemma4:e4b":        true,
+	"gemma4:26b":        true,
+	"gemma4:31b":        true,
+	"gemma4:latest":     true,
+	"deepseek-r1:7b":    true,
+	"deepseek-r1:14b":   true,
+	"deepseek-r1:32b":   true,
+	"deepseek-r1:70b":   true,
+	"deepseek-r1:671b":  true,
+	"qwq:32b":           true,
+}
+
+// isThinkingModel returns true if the model uses a built-in thinking/reasoning
+// phase. Checks exact match first, then prefix match on base name before ":".
+func isThinkingModel(modelName string) bool {
+	if modelName == "" {
+		return false
+	}
+	if thinkingModels[modelName] {
+		return true
+	}
+	base := strings.ToLower(strings.SplitN(modelName, ":", 2)[0])
+	for k := range thinkingModels {
+		if strings.ToLower(strings.SplitN(k, ":", 2)[0]) == base {
+			return true
+		}
+	}
+	return false
 }
 
 var modeOrder = map[string]int{"fast": 0, "standard": 1, "detailed": 2}

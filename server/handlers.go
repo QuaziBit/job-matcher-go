@@ -1114,9 +1114,13 @@ func handleEstimateSalary(w http.ResponseWriter, r *http.Request) {
 	if provider == "" {
 		provider = "anthropic"
 	}
+	model := strings.TrimSpace(r.FormValue("model"))
+	if model != "" {
+		cfg.OllamaModel = model
+	}
 
-	// Guard incompatible models
-	if provider == "ollama" {
+	// Guard incompatible models — thinking models now supported via format:json
+	if provider == "ollama" && !isThinkingModel(cfg.OllamaModel) {
 		for _, blocked := range salaryIncompatibleModels {
 			if strings.Contains(strings.ToLower(cfg.OllamaModel), blocked) {
 				writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf(

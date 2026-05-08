@@ -653,3 +653,91 @@ func TestCallSalaryLLM_AnthropicMissingKeyReturnsError(t *testing.T) {
 		t.Fatal("expected error for missing Anthropic key, got nil")
 	}
 }
+
+// ── isThinkingModel ───────────────────────────────────────────────────────────
+
+func TestIsThinkingModel_Gemma4E4b(t *testing.T) {
+	if !isThinkingModel("gemma4:e4b") {
+		t.Error("gemma4:e4b should be a thinking model")
+	}
+}
+
+func TestIsThinkingModel_Gemma4E2b(t *testing.T) {
+	if !isThinkingModel("gemma4:e2b") {
+		t.Error("gemma4:e2b should be a thinking model")
+	}
+}
+
+func TestIsThinkingModel_DeepSeekR1(t *testing.T) {
+	if !isThinkingModel("deepseek-r1:7b") {
+		t.Error("deepseek-r1:7b should be a thinking model")
+	}
+}
+
+func TestIsThinkingModel_QwQ(t *testing.T) {
+	if !isThinkingModel("qwq:32b") {
+		t.Error("qwq:32b should be a thinking model")
+	}
+}
+
+func TestIsThinkingModel_PrefixMatch(t *testing.T) {
+	if !isThinkingModel("gemma4:latest") {
+		t.Error("gemma4:latest should match via prefix")
+	}
+}
+
+func TestIsThinkingModel_Llama31NotThinking(t *testing.T) {
+	if isThinkingModel("llama3.1:8b") {
+		t.Error("llama3.1:8b should NOT be a thinking model")
+	}
+}
+
+func TestIsThinkingModel_Gemma3NotThinking(t *testing.T) {
+	if isThinkingModel("gemma3:12b") {
+		t.Error("gemma3:12b should NOT be a thinking model")
+	}
+}
+
+func TestIsThinkingModel_EmptyString(t *testing.T) {
+	if isThinkingModel("") {
+		t.Error("empty string should NOT be a thinking model")
+	}
+}
+
+func TestIsThinkingModel_UnknownModel(t *testing.T) {
+	if isThinkingModel("unknownmodel:7b") {
+		t.Error("unknown model should NOT be a thinking model")
+	}
+}
+
+// ── stripThinking ─────────────────────────────────────────────────────────────
+
+func TestStripThinking_RemovesThinkTags(t *testing.T) {
+	input := "<think>some reasoning here</think>\n{\"score\": 4}"
+	result := stripThinking(input)
+	if result != `{"score": 4}` {
+		t.Errorf("expected JSON only, got %q", result)
+	}
+}
+
+func TestStripThinking_RemovesThinkingProcessPreamble(t *testing.T) {
+	input := "Thinking Process:\n1. Analyze\n2. Evaluate\n{\"score\": 4}"
+	result := stripThinking(input)
+	if result != `{"score": 4}` {
+		t.Errorf("expected JSON only, got %q", result)
+	}
+}
+
+func TestStripThinking_PassthroughCleanJSON(t *testing.T) {
+	input := `{"score": 4, "reasoning": "Good match."}`
+	result := stripThinking(input)
+	if result != input {
+		t.Errorf("clean JSON should pass through unchanged, got %q", result)
+	}
+}
+
+func TestStripThinking_EmptyString(t *testing.T) {
+	if stripThinking("") != "" {
+		t.Error("empty string should return empty string")
+	}
+}

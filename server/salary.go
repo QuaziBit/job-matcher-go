@@ -178,8 +178,10 @@ func callSalaryAnthropic(prompt string, temperature float64, cfg config.Config) 
 		return "", model, fmt.Errorf("Anthropic salary API error %d: %s", resp.StatusCode, string(b))
 	}
 	var result struct {
-		Content []struct{ Text string `json:"text"` } `json:"content"`
-		Usage   struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+		Usage struct {
 			InputTokens  int `json:"input_tokens"`
 			OutputTokens int `json:"output_tokens"`
 		} `json:"usage"`
@@ -206,10 +208,10 @@ func callSalaryOpenAI(prompt string, temperature float64, cfg config.Config) (st
 	log.Printf("→ salary openai request: model=%s temperature=%.1f", model, temperature)
 
 	payload := map[string]interface{}{
-		"model":      model,
-		"max_tokens": 400,
+		"model":       model,
+		"max_tokens":  400,
 		"temperature": temperature,
-		"messages":   []map[string]string{{"role": "user", "content": prompt}},
+		"messages":    []map[string]string{{"role": "user", "content": prompt}},
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
@@ -231,7 +233,9 @@ func callSalaryOpenAI(prompt string, temperature float64, cfg config.Config) (st
 	}
 	var result struct {
 		Choices []struct {
-			Message struct{ Content string `json:"content"` } `json:"message"`
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
 			PromptTokens     int `json:"prompt_tokens"`
@@ -315,11 +319,25 @@ func callSalaryOllama(prompt string, temperature float64, cfg config.Config) (st
 	}
 	log.Printf("→ salary ollama request: model=%s temperature=%.1f", model, temperature)
 
+	systemMsg := "You are a compensation analyst. Always respond with valid JSON only."
+	numPredict := 400
+	if isThinkingModel(model) {
+		systemMsg = "CRITICAL: Respond with ONLY a valid JSON object. " +
+			"No prose, no markdown, no explanations. Start with '{' end with '}'." + systemMsg
+		numPredict = 800
+	}
+
 	payload := map[string]interface{}{
-		"model":    model,
-		"messages": []map[string]string{{"role": "user", "content": prompt}},
-		"stream":   false,
-		"options":  map[string]interface{}{"temperature": temperature, "num_predict": 400},
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "system", "content": systemMsg},
+			{"role": "user", "content": prompt},
+		},
+		"stream":  false,
+		"options": map[string]interface{}{"temperature": temperature, "num_predict": numPredict, "think": false},
+	}
+	if isThinkingModel(model) {
+		payload["format"] = "json"
 	}
 	body, _ := json.Marshal(payload)
 
@@ -343,17 +361,25 @@ func callSalaryOllama(prompt string, temperature float64, cfg config.Config) (st
 		b, _ := io.ReadAll(resp.Body)
 		return "", model, fmt.Errorf("Ollama salary API error %d: %s", resp.StatusCode, string(b))
 	}
-	var result struct {
-		Message         struct{ Content string `json:"content"` } `json:"message"`
+	respBody, _ := io.ReadAll(resp.Body)
+	cnt, thinking := ollamaMessageContent(respBody)
+	raw := cnt
+	if raw == "" {
+		raw = thinking
+	}
+	raw = stripThinking(raw)
+
+	var meta struct {
 		PromptEvalCount int `json:"prompt_eval_count"`
 		EvalCount       int `json:"eval_count"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", model, fmt.Errorf("failed to decode Ollama salary response: %w", err)
-	}
+	_ = json.Unmarshal(respBody, &meta)
 	log.Printf("→ salary ollama response (%d chars) prompt_tokens=%d output_tokens=%d",
-		len(result.Message.Content), result.PromptEvalCount, result.EvalCount)
-	return result.Message.Content, model, nil
+		len(raw), meta.PromptEvalCount, meta.EvalCount)
+	if showMoreLogs() {
+		log.Printf("→ salary ollama raw body: %s", raw)
+	}
+	return raw, model, nil
 }
 
 // estimateSalary estimates salary for a job where the JD does not post salary.

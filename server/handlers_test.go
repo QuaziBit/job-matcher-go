@@ -2038,3 +2038,44 @@ func TestHandleCompanyMeta_EmptyNameReturns422(t *testing.T) {
 		t.Errorf("expected 422, got %d", w.Code)
 	}
 }
+
+// ── handleEstimateSalary — model passthrough ──────────────────────────────────
+
+func TestHandleEstimateSalary_EmptyNameReturns404(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("provider=ollama&model=gemma4:e4b")
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/99999/estimate-salary", body)
+	req.URL.Path = "/api/jobs/99999/estimate-salary"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for missing job, got %d", w.Code)
+	}
+}
+
+func TestHandleEstimateSalary_ThinkingModelNotBlocked(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	origCfg := appCfg
+	appCfg.OllamaModel = "gemma4:e4b"
+	defer func() { appCfg = origCfg }()
+
+	id, _ := dbInsertJob("manual://abc", "Dev", "Co", "VA", "Some job description here for testing purposes only that is long enough to pass validation checks.")
+	body := strings.NewReader("provider=ollama&model=gemma4:e4b")
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs/1/estimate-salary", body)
+	req.URL.Path = "/api/jobs/" + strconv.FormatInt(id, 10) + "/estimate-salary"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleJobActions(w, req)
+
+	// The blocklist 422 contains "is not supported for salary estimation"
+	// A thinking model should never produce that specific message
+	if strings.Contains(w.Body.String(), "is not supported for salary estimation") {
+		t.Errorf("thinking model gemma4:e4b should not be blocked by incompatible model list, got: %s", w.Body.String())
+	}
+}
