@@ -59,6 +59,7 @@ func renderLauncherPage(cfg config.Config) string {
 		"{checked_standard}", checkedIf(cfg.AnalysisMode == "standard" || cfg.AnalysisMode == ""),
 		"{checked_detailed}", checkedIf(cfg.AnalysisMode == "detailed"),
 		"{checked_show_more_logs}", checkedIf(cfg.ShowMoreLogs),
+		"{checked_mx_auto_check}", checkedIf(cfg.MXAutoCheck),
 	)
 
 	return r.Replace(htmlStr)

@@ -28,6 +28,9 @@ func TestDefaults(t *testing.T) {
 	if cfg.OllamaTimeoutSeconds != 600 {
 		t.Errorf("expected timeout 600, got %d", cfg.OllamaTimeoutSeconds)
 	}
+	if !cfg.MXAutoCheck {
+		t.Error("expected mx_auto_check default true")
+	}
 	if cfg.OpenAIModel != "gpt-4o-mini" {
 		t.Errorf("expected openai model gpt-4o-mini, got %s", cfg.OpenAIModel)
 	}
@@ -153,6 +156,37 @@ func TestLoadFillsMissingFields(t *testing.T) {
 	}
 	if cfg.OllamaTimeoutSeconds != 600 {
 		t.Errorf("expected default timeout 600, got %d", cfg.OllamaTimeoutSeconds)
+	}
+}
+
+func TestLoadOmittedMXAutoCheckDefaultsTrue(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"port":8033,"host":"127.0.0.1"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.MXAutoCheck {
+		t.Error("omitted mx_auto_check should default true")
+	}
+}
+
+func TestLoadMXAutoCheckEnvOverridesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"port":8034,"mx_auto_check":true}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MX_AUTO_CHECK", "false")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MXAutoCheck {
+		t.Error("env MX_AUTO_CHECK=false should override file")
 	}
 }
 

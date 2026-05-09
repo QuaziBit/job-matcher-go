@@ -835,6 +835,33 @@ func TestHandleProvidersStatus_DefaultProviderOllamaWhenNoKeysSet(t *testing.T) 
 	}
 }
 
+func TestHandleProvidersStatus_HasMXAutoCheckField(t *testing.T) {
+	orig := appCfg.MXAutoCheck
+	appCfg.MXAutoCheck = true
+	defer func() { appCfg.MXAutoCheck = orig }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/providers/status", nil)
+	w := httptest.NewRecorder()
+	handleProvidersStatus(w, req)
+
+	var resp ProvidersStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.MXAutoCheck {
+		t.Error("expected mx_auto_check true")
+	}
+
+	appCfg.MXAutoCheck = false
+	req2 := httptest.NewRequest(http.MethodGet, "/api/providers/status", nil)
+	w2 := httptest.NewRecorder()
+	handleProvidersStatus(w2, req2)
+	json.NewDecoder(w2.Body).Decode(&resp)
+	if resp.MXAutoCheck {
+		t.Error("expected mx_auto_check false")
+	}
+}
+
 // ── GET /api/resumes/ ─────────────────────────────────────────────────────────
 
 func TestHandleResumesList_EmptyDB(t *testing.T) {

@@ -101,6 +101,8 @@ func registerRoutes(mux *http.ServeMux, cfg config.Config) {
 	mux.HandleFunc("/api/companies/crawl", handleCompanyCrawl)
 	mux.HandleFunc("/api/companies/meta", handleCompanyMeta)
 	mux.HandleFunc("/api/providers/status", handleProvidersStatus)
+	mux.HandleFunc("/api/email/validate-domain", handleEmailValidateDomain)
+	mux.HandleFunc("/api/email/mx-cache", handleEmailMXCache)
 	mux.HandleFunc("/shutdown", handleShutdown)
 }
 
@@ -1432,7 +1434,43 @@ func handleProvidersStatus(w http.ResponseWriter, r *http.Request) {
 			"gemini":    appCfg.GeminiModel,
 			"ollama":    appCfg.OllamaModel,
 		},
+		MXAutoCheck: appCfg.MXAutoCheck,
 	})
+}
+
+func handleEmailValidateDomain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	email := strings.TrimSpace(r.FormValue("email"))
+	if email == "" {
+		writeError(w, http.StatusUnprocessableEntity, "email is required")
+		return
+	}
+	res := validateEmailDomain(db, email)
+	writeJSON(w, http.StatusOK, res)
+}
+
+func handleEmailMXCache(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	m, err := dbGetMXCacheMap()
+	if err != nil {
+		log.Printf("✗ dbGetMXCacheMap: %v", err)
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	if m == nil {
+		m = map[string]map[string]interface{}{}
+	}
+	writeJSON(w, http.StatusOK, m)
 }
 
 // handleGetResume serves GET /api/resumes/{id} — returns full resume content.

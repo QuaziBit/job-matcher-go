@@ -1,0 +1,10 @@
+﻿# Environment files
+.env
+.env.*
+
+# Keys / certificates
+*.pem
+*.key
+
+# Local / secret config (any path in this repo)
+**/config.json

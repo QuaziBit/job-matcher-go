@@ -216,6 +216,7 @@ type ProvidersStatusResponse struct {
 	HasOllama       bool              `json:"has_ollama"`
 	DefaultProvider string            `json:"default_provider"`
 	DefaultModels   map[string]string `json:"default_models"`
+	MXAutoCheck     bool              `json:"mx_auto_check"`
 }
 
 // ── API response helpers ──────────────────────────────────────────────────────

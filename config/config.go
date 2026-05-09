@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 const DefaultConfigFile = "config.json"
@@ -37,6 +39,7 @@ type Config struct {
 	// Analysis
 	AnalysisMode string `json:"analysis_mode"` // fast | standard | detailed
 	ShowMoreLogs bool   `json:"show_more_logs"`
+	MXAutoCheck  bool   `json:"mx_auto_check"`
 }
 
 // Defaults returns a Config populated with sensible defaults.
@@ -55,6 +58,7 @@ func Defaults() Config {
 		OllamaModel:          "llama3.1:8b",
 		OllamaTimeoutSeconds: 600,
 		AnalysisMode:         "standard",
+		MXAutoCheck:          true,
 	}
 }
 
@@ -77,6 +81,14 @@ func Load(path string) (Config, error) {
 
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, err
+	}
+
+	var keyPresence struct {
+		MXAuto *json.RawMessage `json:"mx_auto_check"`
+	}
+	_ = json.Unmarshal(data, &keyPresence)
+	if keyPresence.MXAuto == nil {
+		cfg.MXAutoCheck = true
 	}
 
 	// Fill in any missing fields added in newer versions
@@ -115,6 +127,12 @@ func Load(path string) (Config, error) {
 		// valid
 	default:
 		cfg.AnalysisMode = "standard"
+	}
+
+	if v := strings.TrimSpace(os.Getenv("MX_AUTO_CHECK")); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.MXAutoCheck = b
+		}
 	}
 
 	return cfg, nil

@@ -383,6 +383,7 @@ func TestLauncherIndexHasNoUnresolvedTokens(t *testing.T) {
 		"{checked_standard}",
 		"{checked_detailed}",
 		"{checked_show_more_logs}",
+		"{checked_mx_auto_check}",
 	}
 	for _, tok := range tokens {
 		if strings.Contains(html, tok) {

@@ -13,7 +13,7 @@ func TestInitDB_CreatesAllTables(t *testing.T) {
 	defer cleanup()
 
 	rows, err := db.Query(
-		"SELECT name FROM sqlite_master WHERE type='table' AND name IN ('jobs','resumes','analyses','applications','job_emails')",
+		"SELECT name FROM sqlite_master WHERE type='table' AND name IN ('jobs','resumes','analyses','applications','job_emails','domain_mx_cache')",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -26,8 +26,8 @@ func TestInitDB_CreatesAllTables(t *testing.T) {
 		rows.Scan(&name)
 		tables = append(tables, name)
 	}
-	if len(tables) != 5 {
-		t.Errorf("expected 5 tables, got %d: %v", len(tables), tables)
+	if len(tables) != 6 {
+		t.Errorf("expected 6 tables, got %d: %v", len(tables), tables)
 	}
 }
 

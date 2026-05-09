@@ -178,6 +178,7 @@ func (l *Launcher) parseConfig(r *http.Request) config.Config {
 	}
 	// Checkbox: absent from POST means unchecked (false).
 	cfg.ShowMoreLogs = r.FormValue("show_more_logs") != ""
+	cfg.MXAutoCheck = r.FormValue("mx_auto_check") != ""
 	return cfg
 }
 

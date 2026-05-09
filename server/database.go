@@ -90,6 +90,13 @@ func createSchema() error {
 		FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 	);
 
+	CREATE TABLE IF NOT EXISTS domain_mx_cache (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		domain       TEXT NOT NULL UNIQUE,
+		has_mx       INTEGER NOT NULL DEFAULT 0,
+		mx_records   TEXT DEFAULT '',
+		checked_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
 	CREATE TABLE IF NOT EXISTS company_meta (
 		id                     INTEGER PRIMARY KEY AUTOINCREMENT,
 		company_name           TEXT NOT NULL UNIQUE,
@@ -699,6 +706,39 @@ func dbGetCompanyMeta(companyName string) (*CompanyMeta, error) {
 		return nil, err
 	}
 	return &m, nil
+}
+
+func dbGetMXCacheMap() (map[string]map[string]interface{}, error) {
+	rows, err := db.Query(`
+		SELECT domain, has_mx, COALESCE(mx_records,''), datetime(checked_at)
+		FROM domain_mx_cache ORDER BY domain COLLATE NOCASE`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]map[string]interface{}{}
+	for rows.Next() {
+		var dom, rawJSON string
+		var hasMX int
+		var checked string
+		if err := rows.Scan(&dom, &hasMX, &rawJSON, &checked); err != nil {
+			return nil, err
+		}
+		var mxHosts []string
+		rawJSON = strings.TrimSpace(rawJSON)
+		if rawJSON != "" {
+			_ = json.Unmarshal([]byte(rawJSON), &mxHosts)
+		}
+		if mxHosts == nil {
+			mxHosts = []string{}
+		}
+		out[dom] = map[string]interface{}{
+			"has_mx":     hasMX != 0,
+			"mx_records": mxHosts,
+			"checked":    checked,
+		}
+	}
+	return out, rows.Err()
 }
 
 func dbUpsertCompanyMeta(companyName string, r CompanyCrawlResult) error {
