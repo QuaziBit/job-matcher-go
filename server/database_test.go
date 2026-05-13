@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,6 +42,105 @@ func TestInitDB_Idempotent(t *testing.T) {
 	// Second call should not error
 	if err := createSchema(); err != nil {
 		t.Fatalf("second createSchema failed: %v", err)
+	}
+}
+
+func companyMetaColumnSet(t *testing.T) map[string]bool {
+	t.Helper()
+	rows, err := db.Query(`PRAGMA table_info(company_meta)`)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(company_meta): %v", err)
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan table_info: %v", err)
+		}
+		out[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	return out
+}
+
+func TestInitDB_CompanyMetaHasLLMColumns(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	want := []string{
+		"llm_assessment",
+		"llm_risk_level",
+		"llm_signals",
+		"llm_provider",
+		"llm_model",
+		"llm_assessed_at",
+	}
+	cols := companyMetaColumnSet(t)
+	for _, name := range want {
+		if !cols[name] {
+			t.Errorf("company_meta missing column %q (have: %v)", name, cols)
+		}
+	}
+}
+
+func TestInitDB_LLMColumnsMigration(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "legacy.db")
+
+	legacy, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	_, err = legacy.Exec(`
+		CREATE TABLE company_meta (
+			id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+			company_name            TEXT NOT NULL UNIQUE,
+			glassdoor_url           TEXT DEFAULT '',
+			glassdoor_rating        REAL DEFAULT NULL,
+			glassdoor_review_count  INTEGER DEFAULT NULL,
+			linkedin_url            TEXT DEFAULT '',
+			linkedin_employee_count TEXT DEFAULT '',
+			linkedin_founded        TEXT DEFAULT '',
+			bbb_url                 TEXT DEFAULT '',
+			bbb_rating              TEXT DEFAULT '',
+			crawled_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);`)
+	if err != nil {
+		legacy.Close()
+		t.Fatalf("create legacy company_meta: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close legacy: %v", err)
+	}
+
+	if err := initDB(dbPath); err != nil {
+		t.Fatalf("initDB: %v", err)
+	}
+	defer func() {
+		if db != nil {
+			_ = db.Close()
+		}
+	}()
+
+	want := []string{
+		"llm_assessment",
+		"llm_risk_level",
+		"llm_signals",
+		"llm_provider",
+		"llm_model",
+		"llm_assessed_at",
+	}
+	cols := companyMetaColumnSet(t)
+	for _, name := range want {
+		if !cols[name] {
+			t.Errorf("after migration, company_meta missing column %q", name)
+		}
 	}
 }
 
@@ -1344,5 +1444,77 @@ func TestDBUpsertCompanyMeta_EmptyResultStoresRow(t *testing.T) {
 	}
 	if meta == nil {
 		t.Fatal("expected row even for empty crawl result")
+	}
+}
+
+func TestDBUpsertCompanyVetting_StoresAndRetrieves(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Insert base row first
+	if err := dbUpsertCompanyMeta("VetCo", CompanyCrawlResult{BBBRating: "A"}); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+
+	if err := dbUpsertCompanyVetting("VetCo", "low", "Looks legit.", `["A+ BBB"]`, "anthropic", "claude-test"); err != nil {
+		t.Fatalf("upsert vetting: %v", err)
+	}
+
+	row, err := dbGetCompanyMeta("VetCo")
+	if err != nil || row == nil {
+		t.Fatalf("get meta: err=%v row=%v", err, row)
+	}
+	if row.LLMRiskLevel != "low" {
+		t.Errorf("expected risk_level=low, got %q", row.LLMRiskLevel)
+	}
+	if row.LLMAssessment != "Looks legit." {
+		t.Errorf("expected assessment, got %q", row.LLMAssessment)
+	}
+	if row.LLMProvider != "anthropic" {
+		t.Errorf("expected provider=anthropic, got %q", row.LLMProvider)
+	}
+	if row.LLMAssessedAt == "" {
+		t.Error("expected llm_assessed_at to be set")
+	}
+}
+
+func TestDBUpsertCompanyVetting_UpdatesExistingVetting(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	if err := dbUpsertCompanyMeta("UpdateCo", CompanyCrawlResult{}); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+	if err := dbUpsertCompanyVetting("UpdateCo", "low", "First result.", `[]`, "anthropic", "m1"); err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+	if err := dbUpsertCompanyVetting("UpdateCo", "high", "Updated result.", `["new signal"]`, "gemini", "m2"); err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+
+	row, _ := dbGetCompanyMeta("UpdateCo")
+	if row.LLMRiskLevel != "high" {
+		t.Errorf("expected updated risk=high, got %q", row.LLMRiskLevel)
+	}
+	if row.LLMProvider != "gemini" {
+		t.Errorf("expected updated provider=gemini, got %q", row.LLMProvider)
+	}
+}
+
+func TestDBUpsertCompanyVetting_CreatesRowIfNotExists(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// No prior company_meta row — upsert should create one
+	if err := dbUpsertCompanyVetting("NewCo", "unknown", "No data.", `[]`, "ollama", "llama3.1:8b"); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	row, err := dbGetCompanyMeta("NewCo")
+	if err != nil || row == nil {
+		t.Fatalf("expected row created: err=%v row=%v", err, row)
+	}
+	if row.LLMRiskLevel != "unknown" {
+		t.Errorf("expected risk=unknown, got %q", row.LLMRiskLevel)
 	}
 }

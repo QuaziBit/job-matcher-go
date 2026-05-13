@@ -610,7 +610,7 @@ func analyzeWithGemini(resume, jobDescription string, cfg config.Config) (Analys
 		Text string `json:"text"`
 	}
 	type geminiContent struct {
-		Role  string      `json:"role"`
+		Role  string       `json:"role"`
 		Parts []geminiPart `json:"parts"`
 	}
 	payload := map[string]interface{}{
@@ -627,6 +627,8 @@ func analyzeWithGemini(resume, jobDescription string, cfg config.Config) (Analys
 			"temperature": 0.2,
 		},
 	}
+	gc := payload["generationConfig"].(map[string]interface{})
+	mergeGeminiAFCIntoGenerationConfig(gc)
 
 	body, _ := json.Marshal(payload)
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, cfg.GeminiAPIKey)

@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/md5"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -100,6 +101,7 @@ func registerRoutes(mux *http.ServeMux, cfg config.Config) {
 	mux.HandleFunc("/api/providers/models", handleProviderModels)
 	mux.HandleFunc("/api/companies/crawl", handleCompanyCrawl)
 	mux.HandleFunc("/api/companies/meta", handleCompanyMeta)
+	mux.HandleFunc("/api/companies/vet", handleCompanyVet)
 	mux.HandleFunc("/api/providers/status", handleProvidersStatus)
 	mux.HandleFunc("/api/email/validate-domain", handleEmailValidateDomain)
 	mux.HandleFunc("/api/email/mx-cache", handleEmailMXCache)
@@ -180,6 +182,57 @@ func handleVettingPage(w http.ResponseWriter, r *http.Request) {
 	serveUIFile(w, "vetting.html")
 }
 
+// fetchVettingLLMMetaForCompanies loads llm_* fields from company_meta for vetting UI badges.
+func fetchVettingLLMMetaForCompanies(names []string) (map[string]map[string]interface{}, error) {
+	out := make(map[string]map[string]interface{}, len(names))
+	if len(names) == 0 {
+		return out, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")
+	query := `SELECT company_name, llm_risk_level, llm_assessment, llm_signals, llm_provider, llm_model, llm_assessed_at
+		FROM company_meta WHERE company_name IN (` + placeholders + `)`
+	args := make([]interface{}, len(names))
+	for i, n := range names {
+		args[i] = n
+	}
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var company string
+		var risk, assess, sigs, prov, mod, assessed sql.NullString
+		if err := rows.Scan(&company, &risk, &assess, &sigs, &prov, &mod, &assessed); err != nil {
+			return nil, err
+		}
+		var signals []interface{}
+		if sigs.Valid && strings.TrimSpace(sigs.String) != "" {
+			_ = json.Unmarshal([]byte(sigs.String), &signals)
+		}
+		if signals == nil {
+			signals = []interface{}{}
+		}
+		meta := map[string]interface{}{
+			"llm_risk_level":  nullStrPtr(risk),
+			"llm_assessment":  nullStrPtr(assess),
+			"llm_signals":     signals,
+			"llm_provider":    nullStrPtr(prov),
+			"llm_model":       nullStrPtr(mod),
+			"llm_assessed_at": nullStrPtr(assessed),
+		}
+		out[company] = meta
+	}
+	return out, rows.Err()
+}
+
+func nullStrPtr(ns sql.NullString) interface{} {
+	if !ns.Valid {
+		return nil
+	}
+	return ns.String
+}
+
 // handleVettingAPI serves GET /api/vetting — returns all jobs grouped by
 // company and by recruiter for the vetting page.
 func handleVettingAPI(w http.ResponseWriter, r *http.Request) {
@@ -199,8 +252,9 @@ func handleVettingAPI(w http.ResponseWriter, r *http.Request) {
 		RecruiterPhone string `json:"recruiter_phone"`
 	}
 	type CompanyGroup struct {
-		Company string       `json:"company"`
-		Jobs    []VettingJob `json:"jobs"`
+		Company string                 `json:"company"`
+		Jobs    []VettingJob           `json:"jobs"`
+		Meta    map[string]interface{} `json:"meta"`
 	}
 	type RecruiterJob struct {
 		ID        int64  `json:"id"`
@@ -284,10 +338,23 @@ func handleVettingAPI(w http.ResponseWriter, r *http.Request) {
 		log.Printf("✗ handleVettingAPI rows error: %v", err)
 	}
 
+	llmMetaByCompany, err := fetchVettingLLMMetaForCompanies(companyOrder)
+	if err != nil {
+		log.Printf("✗ handleVettingAPI company_meta llm batch: %v", err)
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
 	// Build ordered slices
 	companies := make([]CompanyGroup, 0, len(companyOrder))
 	for _, name := range companyOrder {
-		companies = append(companies, *companyMap[name])
+		cg := *companyMap[name]
+		if m, ok := llmMetaByCompany[name]; ok {
+			cg.Meta = m
+		} else {
+			cg.Meta = map[string]interface{}{}
+		}
+		companies = append(companies, cg)
 	}
 
 	recruiters := make([]RecruiterGroup, 0, len(recruiterMap))
@@ -1846,5 +1913,152 @@ func handleCompanyMeta(w http.ResponseWriter, r *http.Request) {
 		"bbb_url":                meta.BBBURL,
 		"bbb_rating":             meta.BBBRating,
 		"crawled_at":             meta.CrawledAt,
+	})
+}
+
+func vettingForceRescan(force string) bool {
+	v := strings.TrimSpace(strings.ToLower(force))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+func parseLLMCacheTime(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02 15:04:05.000000000"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05", s, time.Local); err == nil {
+		return t, true
+	}
+	return time.Time{}, false
+}
+
+func companyMetaToVettingMeta(m *CompanyMeta) map[string]interface{} {
+	if m == nil {
+		return map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"company_name":             m.CompanyName,
+		"glassdoor_url":            m.GlassdoorURL,
+		"glassdoor_rating":         m.GlassdoorRating,
+		"glassdoor_review_count":   m.GlassdoorReviewCount,
+		"linkedin_url":             m.LinkedInURL,
+		"linkedin_employee_count":  m.LinkedInEmployees,
+		"linkedin_founded":         m.LinkedInFounded,
+		"bbb_url":                  m.BBBURL,
+		"bbb_rating":               m.BBBRating,
+	}
+}
+
+// handleCompanyVet serves POST /api/companies/vet — LLM company vetting with 7-day cache.
+func handleCompanyVet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	companyName := strings.TrimSpace(r.FormValue("company_name"))
+	if companyName == "" {
+		writeError(w, http.StatusUnprocessableEntity, "company_name is required.")
+		return
+	}
+	provider := strings.TrimSpace(strings.ToLower(r.FormValue("provider")))
+	if provider == "" {
+		provider = "anthropic"
+	}
+	model := strings.TrimSpace(r.FormValue("model"))
+	force := strings.TrimSpace(r.FormValue("force"))
+
+	row, err := dbGetCompanyMeta(companyName)
+	if err != nil {
+		log.Printf("✗ dbGetCompanyMeta(%q): %v", companyName, err)
+		writeError(w, http.StatusInternalServerError, "DB error")
+		return
+	}
+
+	if !vettingForceRescan(force) && row != nil && strings.TrimSpace(row.LLMAssessedAt) != "" {
+		if assessed, ok := parseLLMCacheTime(row.LLMAssessedAt); ok {
+			if time.Since(assessed) < time.Duration(VETTING_CACHE_TTL_DAYS)*24*time.Hour {
+				signals := []interface{}{}
+				if strings.TrimSpace(row.LLMSignals) != "" {
+					_ = json.Unmarshal([]byte(row.LLMSignals), &signals)
+				}
+				if signals == nil {
+					signals = []interface{}{}
+				}
+				risk := strings.TrimSpace(row.LLMRiskLevel)
+				if risk == "" {
+					risk = "unknown"
+				}
+				log.Printf("✓ Returning cached vetting for: %q", companyName)
+				writeJSON(w, http.StatusOK, map[string]interface{}{
+					"ok":          true,
+					"cached":      true,
+					"company":     companyName,
+					"risk_level":  risk,
+					"assessment":  row.LLMAssessment,
+					"signals":     signals,
+					"provider":    row.LLMProvider,
+					"model":       row.LLMModel,
+				})
+				return
+			}
+		}
+	}
+
+	if row == nil || strings.TrimSpace(row.CrawledAt) == "" {
+		log.Printf("→ auto-crawling %q before vetting", companyName)
+		crawl := CrawlCompany(companyName)
+		if err := dbUpsertCompanyMeta(companyName, crawl); err != nil {
+			log.Printf("✗ dbUpsertCompanyMeta before vet: %v", err)
+		}
+		row, err = dbGetCompanyMeta(companyName)
+		if err != nil {
+			log.Printf("✗ dbGetCompanyMeta after crawl %q: %v", companyName, err)
+			writeError(w, http.StatusInternalServerError, "DB error")
+			return
+		}
+		if row == nil {
+			row = &CompanyMeta{CompanyName: companyName}
+		}
+	}
+
+	metaMap := companyMetaToVettingMeta(row)
+	res, err := vetCompany(companyName, metaMap, provider, model, appCfg)
+	if err != nil {
+		log.Printf("✗ vetCompany %q: %v", companyName, err)
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	sigBytes, jerr := json.Marshal(res.Signals)
+	if jerr != nil {
+		sigBytes = []byte("[]")
+	}
+	if err := dbUpsertCompanyVetting(companyName, res.RiskLevel, res.Assessment, string(sigBytes), res.Provider, res.Model); err != nil {
+		log.Printf("✗ dbUpsertCompanyVetting(%q): %v", companyName, err)
+		writeError(w, http.StatusInternalServerError, "failed to save vetting result")
+		return
+	}
+
+	signalsOut := make([]interface{}, len(res.Signals))
+	for i, s := range res.Signals {
+		signalsOut[i] = s
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":          true,
+		"cached":      false,
+		"company":     companyName,
+		"risk_level":  res.RiskLevel,
+		"assessment":  res.Assessment,
+		"signals":     signalsOut,
+		"provider":    res.Provider,
+		"model":       res.Model,
 	})
 }

@@ -219,6 +219,18 @@ type ProvidersStatusResponse struct {
 	MXAutoCheck     bool              `json:"mx_auto_check"`
 }
 
+// CompanyVettingResponse is returned by POST /api/companies/vet.
+type CompanyVettingResponse struct {
+	OK          bool     `json:"ok"`
+	Cached      bool     `json:"cached"`
+	Company     string   `json:"company"`
+	RiskLevel   string   `json:"risk_level"`
+	Assessment  string   `json:"assessment"`
+	Signals     []string `json:"signals"`
+	Provider    string   `json:"provider"`
+	Model       string   `json:"model"`
+}
+
 // ── API response helpers ──────────────────────────────────────────────────────
 
 type APIError struct {

@@ -274,6 +274,7 @@ func callSalaryGemini(prompt string, temperature float64, cfg config.Config) (st
 			"temperature": temperature,
 		},
 	}
+	mergeGeminiAFCIntoGenerationConfig(payload["generationConfig"].(map[string]interface{}))
 	body, _ := json.Marshal(payload)
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, cfg.GeminiAPIKey)
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))

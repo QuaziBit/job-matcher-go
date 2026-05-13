@@ -108,7 +108,13 @@ func createSchema() error {
 		linkedin_founded       TEXT DEFAULT '',
 		bbb_url                TEXT DEFAULT '',
 		bbb_rating             TEXT DEFAULT '',
-		crawled_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		crawled_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		llm_assessment         TEXT DEFAULT NULL,
+		llm_risk_level         TEXT DEFAULT NULL,
+		llm_signals            TEXT DEFAULT NULL,
+		llm_provider           TEXT DEFAULT NULL,
+		llm_model              TEXT DEFAULT NULL,
+		llm_assessed_at        TIMESTAMP DEFAULT NULL
 	);`
 	_, err := db.Exec(schema)
 	return err
@@ -128,6 +134,12 @@ func runMigrations() {
 		"ALTER TABLE analyses ADD COLUMN duration_seconds INTEGER DEFAULT 0",
 		"ALTER TABLE analyses ADD COLUMN analysis_mode TEXT DEFAULT 'standard'",
 		"ALTER TABLE jobs ADD COLUMN salary_estimate TEXT DEFAULT ''",
+		"ALTER TABLE company_meta ADD COLUMN llm_assessment TEXT DEFAULT NULL",
+		"ALTER TABLE company_meta ADD COLUMN llm_risk_level TEXT DEFAULT NULL",
+		"ALTER TABLE company_meta ADD COLUMN llm_signals TEXT DEFAULT NULL",
+		"ALTER TABLE company_meta ADD COLUMN llm_provider TEXT DEFAULT NULL",
+		"ALTER TABLE company_meta ADD COLUMN llm_model TEXT DEFAULT NULL",
+		"ALTER TABLE company_meta ADD COLUMN llm_assessed_at TIMESTAMP DEFAULT NULL",
 	}
 	for _, m := range migrations {
 		_, _ = db.Exec(m)
@@ -669,7 +681,7 @@ func parseMissingSkills(raw string) []MissingSkill {
 
 // ── company_meta ──────────────────────────────────────────────────────────────
 
-// CompanyMeta holds cached crawl results for a company.
+// CompanyMeta holds cached crawl results and optional LLM vetting for a company.
 type CompanyMeta struct {
 	CompanyName          string  `json:"company_name"`
 	GlassdoorURL         string  `json:"glassdoor_url"`
@@ -681,6 +693,12 @@ type CompanyMeta struct {
 	BBBURL               string  `json:"bbb_url"`
 	BBBRating            string  `json:"bbb_rating"`
 	CrawledAt            string  `json:"crawled_at"`
+	LLMAssessment        string  `json:"llm_assessment,omitempty"`
+	LLMRiskLevel         string  `json:"llm_risk_level,omitempty"`
+	LLMSignals           string  `json:"llm_signals,omitempty"`
+	LLMProvider          string  `json:"llm_provider,omitempty"`
+	LLMModel             string  `json:"llm_model,omitempty"`
+	LLMAssessedAt        string  `json:"llm_assessed_at,omitempty"`
 }
 
 func dbGetCompanyMeta(companyName string) (*CompanyMeta, error) {
@@ -689,21 +707,42 @@ func dbGetCompanyMeta(companyName string) (*CompanyMeta, error) {
 		       COALESCE(glassdoor_url,''), COALESCE(glassdoor_rating,0), COALESCE(glassdoor_review_count,0),
 		       COALESCE(linkedin_url,''), COALESCE(linkedin_employee_count,''), COALESCE(linkedin_founded,''),
 		       COALESCE(bbb_url,''), COALESCE(bbb_rating,''),
-		       COALESCE(crawled_at,'')
+		       COALESCE(crawled_at,''),
+		       llm_assessment, llm_risk_level, llm_signals, llm_provider, llm_model, llm_assessed_at
 		FROM company_meta WHERE company_name = ?`, companyName)
 	var m CompanyMeta
+	var llmAssessment, llmRisk, llmSignals, llmProvider, llmModel, llmAssessedAt sql.NullString
 	err := row.Scan(
 		&m.CompanyName,
 		&m.GlassdoorURL, &m.GlassdoorRating, &m.GlassdoorReviewCount,
 		&m.LinkedInURL, &m.LinkedInEmployees, &m.LinkedInFounded,
 		&m.BBBURL, &m.BBBRating,
 		&m.CrawledAt,
+		&llmAssessment, &llmRisk, &llmSignals, &llmProvider, &llmModel, &llmAssessedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if llmAssessment.Valid {
+		m.LLMAssessment = llmAssessment.String
+	}
+	if llmRisk.Valid {
+		m.LLMRiskLevel = llmRisk.String
+	}
+	if llmSignals.Valid {
+		m.LLMSignals = llmSignals.String
+	}
+	if llmProvider.Valid {
+		m.LLMProvider = llmProvider.String
+	}
+	if llmModel.Valid {
+		m.LLMModel = llmModel.String
+	}
+	if llmAssessedAt.Valid {
+		m.LLMAssessedAt = llmAssessedAt.String
 	}
 	return &m, nil
 }
@@ -762,6 +801,23 @@ func dbUpsertCompanyMeta(companyName string, r CompanyCrawlResult) error {
 		r.GlassdoorURL, r.GlassdoorRating, r.GlassdoorReviewCount,
 		r.LinkedInURL, r.LinkedInEmployees, r.LinkedInFounded,
 		r.BBBURL, r.BBBRating,
+	)
+	return err
+}
+
+// dbUpsertCompanyVetting writes LLM vetting fields for a company row, creating the row if needed.
+func dbUpsertCompanyVetting(companyName, riskLevel, assessment, signalsJSON, provider, model string) error {
+	_, err := db.Exec(`
+		INSERT INTO company_meta (company_name, llm_risk_level, llm_assessment, llm_signals, llm_provider, llm_model, llm_assessed_at)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(company_name) DO UPDATE SET
+			llm_risk_level  = excluded.llm_risk_level,
+			llm_assessment  = excluded.llm_assessment,
+			llm_signals     = excluded.llm_signals,
+			llm_provider    = excluded.llm_provider,
+			llm_model       = excluded.llm_model,
+			llm_assessed_at = excluded.llm_assessed_at`,
+		companyName, riskLevel, assessment, signalsJSON, provider, model,
 	)
 	return err
 }

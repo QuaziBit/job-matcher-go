@@ -1911,6 +1911,35 @@ func TestHandleVettingAPI_ScrapedAtInRecruiterJobs(t *testing.T) {
 	t.Error("recruiter not found")
 }
 
+func TestHandleVettingAPI_CompanyHasMetaField(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	dbInsertJob("https://example.com/vm", "Dev", "Zeta LLC", "VA", "desc for testing purposes here")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/vetting", nil)
+	w := httptest.NewRecorder()
+	handleVettingAPI(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp struct {
+		Companies []map[string]json.RawMessage `json:"companies"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Companies) == 0 {
+		t.Fatal("expected at least one company")
+	}
+	for i, c := range resp.Companies {
+		if _, ok := c["meta"]; !ok {
+			t.Fatalf("company %d missing meta key: %v", i, c)
+		}
+	}
+}
+
 func TestHandleVettingPage_Renders(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/vetting", nil)
 	w := httptest.NewRecorder()
@@ -1981,7 +2010,8 @@ func TestHandleCompanyCrawl_StoresAndReturnsResult(t *testing.T) {
 	// Should return cached since we just seeded it
 	if resp["cached"] != true {
 		t.Error("expected cached:true on second call")
-	}}
+	}
+}
 
 func TestHandleCompanyCrawl_ReturnsCachedOnSecondCall(t *testing.T) {
 	cleanup := setupTestDB(t)
@@ -2063,6 +2093,115 @@ func TestHandleCompanyMeta_EmptyNameReturns422(t *testing.T) {
 
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+// ── POST /api/companies/vet ─────────────────────────────────────────────────
+
+func TestHandleCompanyVet_EmptyNameReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	body := strings.NewReader("company_name=")
+	req := httptest.NewRequest(http.MethodPost, "/api/companies/vet", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleCompanyVet(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d — %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleCompanyVet_ReturnsCachedResult(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	if err := dbUpsertCompanyMeta("CachedCo", CompanyCrawlResult{BBBURL: "https://bbb.org/cachedco", BBBRating: "A"}); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+	if err := dbUpsertCompanyVetting("CachedCo", "low", "Looks good.", `["A+ BBB"]`, "anthropic", "claude-test"); err != nil {
+		t.Fatalf("seed vetting: %v", err)
+	}
+	row, err := dbGetCompanyMeta("CachedCo")
+	if err != nil || row == nil || strings.TrimSpace(row.LLMAssessedAt) == "" {
+		t.Fatalf("expected llm_assessed_at set, row=%v err=%v", row, err)
+	}
+
+	body := strings.NewReader("company_name=CachedCo&provider=anthropic")
+	req := httptest.NewRequest(http.MethodPost, "/api/companies/vet", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleCompanyVet(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["cached"] != true {
+		t.Fatalf("expected cached:true, got %#v", resp)
+	}
+	if resp["risk_level"] != "low" {
+		t.Fatalf("risk_level: %#v", resp["risk_level"])
+	}
+	if resp["assessment"] != "Looks good." {
+		t.Fatalf("assessment: %#v", resp["assessment"])
+	}
+}
+
+func TestHandleCompanyVet_ForceBypassesCache(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	if err := dbUpsertCompanyMeta("ForceCo", CompanyCrawlResult{BBBURL: "https://bbb.org/forceco"}); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+	if err := dbUpsertCompanyVetting("ForceCo", "low", "Cached text.", `[]`, "anthropic", "m"); err != nil {
+		t.Fatalf("seed vetting: %v", err)
+	}
+
+	body := strings.NewReader("company_name=ForceCo&provider=not-a-provider&force=true")
+	req := httptest.NewRequest(http.MethodPost, "/api/companies/vet", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleCompanyVet(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 after bypassing cache (unsupported provider), got %d — %s", w.Code, w.Body.String())
+	}
+	var errResp APIError
+	json.NewDecoder(w.Body).Decode(&errResp)
+	if errResp.Error == "" {
+		t.Fatal("expected error message body")
+	}
+}
+
+func TestHandleCompanyVet_LLMErrorReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	if err := dbUpsertCompanyMeta("ErrCo", CompanyCrawlResult{BBBURL: "https://bbb.org/errco"}); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+
+	origAnthropic := appCfg.AnthropicAPIKey
+	appCfg.AnthropicAPIKey = ""
+	defer func() { appCfg.AnthropicAPIKey = origAnthropic }()
+
+	body := strings.NewReader("company_name=ErrCo&provider=anthropic")
+	req := httptest.NewRequest(http.MethodPost, "/api/companies/vet", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleCompanyVet(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d — %s", w.Code, w.Body.String())
+	}
+	var errResp APIError
+	json.NewDecoder(w.Body).Decode(&errResp)
+	if !strings.Contains(errResp.Error, "Anthropic API key") {
+		t.Fatalf("unexpected error: %q", errResp.Error)
 	}
 }
 
