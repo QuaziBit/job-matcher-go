@@ -37,13 +37,18 @@
 
 ## What It Does
 
-- Scrapes job postings from a URL (Indeed, LinkedIn, Greenhouse, Workday, etc.)
+- Scrapes job postings from a URL or accepts pasted/manual job descriptions
 - Compares each job description against your resume using an LLM
 - Scores the match from **1** (poor) to **5** (excellent) with a skill breakdown
 - Applies a **penalty pipeline** — detects hard blockers like clearance requirements and experience minimums and adjusts the raw score automatically
+- Estimates salary range for each job using the configured LLM provider
+- Vets companies by crawling BBB, Glassdoor, and LinkedIn, then running an LLM legitimacy assessment
+- Validates recruiter email domains via MX DNS lookup — no personal data leaves the machine
 - Tracks application status, recruiter contact info, and personal notes
-- Supports **Anthropic API** (Claude) or **Ollama** (local models, fully offline)
-- All templates, CSS, and JS are embedded inside the binary — no external files needed
+- Supports **Anthropic**, **OpenAI**, **Gemini**, and **Ollama** (local models, fully offline)
+
+- HTML, CSS, and JS are embedded inside the binary — no external files needed at runtime
+  _(known issue: Google Fonts are currently loaded from Google CDN — will be bundled locally in a future update)_
 
 **Stack:** Go 1.21 · net/http · SQLite (pure Go) · html/template · go:embed
 
@@ -261,21 +266,23 @@ ollama serve
 | Model | RAM needed | Quality |
 |---|---|---|
 | `llama3.1:8b` | ~8 GB | Best balance for everyday use |
+| `gemma4:e4b` | ~8 GB | Strong quality, good JSON reliability |
 | `gemma3:27b` | ~32 GB | Near-Anthropic quality |
-| `mistral:7b` | ~5 GB | Decent, lightweight |
 | `phi3.5:3.8b` | ~4 GB | Fast triage only |
+
+> ⚠️ `mistral` family models are not recommended — known to produce false skill gap detection and unreliable structured output.
 
 **Recommended workflow:**
 
-- Quick triage → `llama3.1:8b`
+- Quick triage → `llama3.1:8b` or `gemma4:e4b`
 - Serious roles → `gemma3:27b`
-- Final decision → Anthropic toggle
+- Final decision → Anthropic or Gemini or OpenAI
 
 ---
 
 ## Scraping Notes
 
-Works out of the box with most public job boards: Indeed, LinkedIn, Greenhouse, Lever, SmartRecruiters, BambooHR.
+Works with most public job boards that serve static HTML. Tested with LinkedIn and Indeed. Other boards may work but have not been fully verified.
 
 May not work if the page:
 
@@ -283,7 +290,19 @@ May not work if the page:
 - Renders content entirely via JavaScript (some Workday / iCIMS pages)
 - Has aggressive bot detection
 
-**Workaround:** Use the **Paste** tab — copy the job description text from your browser and paste it directly.
+If the scraper cannot extract a company name from the page, the job will be grouped under **Unknown Company** on the vetting page. Use the job detail page to set the company name manually.
+
+**Workaround:** Use the **Paste** tab — copy the job description text from your browser and paste it directly. Or use the **Manual** tab to enter the job details by hand without a URL.
+
+## Company Vetting Notes
+
+The vetting page crawls three public sources for each company:
+
+- **BBB** (Better Business Bureau) — rating and listing status
+- **Glassdoor** — rating and review count
+- **LinkedIn** — employee count and founded date
+
+Crawling may return partial results depending on bot detection and page availability. Results are cached for 7 days.
 
 ---
 
@@ -309,61 +328,79 @@ GitHub Actions will automatically:
 
 ```
 job-matcher-go/
-├── main.go                          Entry point — loads config, starts launcher
-├── config/
-│   ├── config.go                    Load/save cfg/config.json with defaults
-│   └── config_test.go
-├── launcher/
-│   ├── launcher.go                  Launcher HTTP server — Start/Stop/Restart handlers
-│   ├── health.go                    SQLite / Ollama / Anthropic / OpenAI / Gemini health checks
-│   ├── template.go                  Injects config values into launcher HTML via strings.Replacer
-│   ├── launcher_test.go
-│   ├── health_test.go
-│   └── embedded/
-│       ├── launcher.html            Launcher UI — vertical + horizontal layouts
-│       ├── launcher.css
-│       └── launcher.js
-├── server/
-│   ├── server.go                    Main app HTTP server, go:embed, template setup
-│   ├── handlers.go                  All HTTP route handlers (pages + API)
-│   ├── llm.go                       LLM callers — Anthropic, OpenAI, Gemini, Ollama chunked
-│   ├── analyzer_config.go           Mode configs (fast/standard/detailed), model capability map
-│   ├── prompts.go                   System + user prompt builders, chunk prompts
-│   ├── parsers.go                   JSON repair, 5-pass parse loop, chunk parsers
-│   ├── penalties.go                 Penalty pipeline — blocker/major/minor scoring, caps
-│   ├── salary.go                    Salary extraction + estimation (all 4 providers)
-│   ├── scraper.go                   URL scraper, text quality assessment
-│   ├── skills.go                    Skill normalization + category mapping
-│   ├── known_models.go              Static model registry per cloud provider
-│   ├── database.go                  SQLite schema + all queries
-│   ├── models.go                    Shared structs (Job, Resume, Analysis, etc.)
-│   ├── utils.go                     Shared helpers (buildComparison, hasBlocker, etc.)
-│   ├── analyzer_test.go
-│   ├── database_test.go
-│   ├── handlers_test.go
-│   ├── scraper_test.go
-│   ├── skills_test.go
-│   ├── testhelpers_test.go
-│   └── embedded/
-│       ├── templates/
-│       │   ├── base.html            Sidebar layout shell
-│       │   ├── index.html           Job list page with filters and pagination
-│       │   ├── job_detail.html      Analysis, salary, application tracking, description
-│       │   ├── job_preview.html     Scrape preview — edit before saving
-│       │   └── resumes.html         Resume version manager
-│       └── static/
-│           ├── css/style.css        Dark theme, IBM Plex fonts
-│           └── js/app.js            Frontend JS — forms, toasts, tabs, score meters
+├── main.go                         # Entry point — starts launcher and HTTP server
+├── go.mod                          # Go module dependencies
+├── Makefile                        # Build, run, and test targets
+├── config.example.json             # Example launcher config file
+├── .cursorignore                   # Excludes secrets/keys from Cursor AI context
+│
+├── config/                         # Configuration package
+│   ├── config.go                   # Config struct, env var loading, JSON parsing
+│   └── config_test.go              # Config tests
+│
+├── launcher/                       # GUI launcher (system tray + config form)
+│   ├── launcher.go                 # Launcher logic and HTTP config server
+│   ├── template.go                 # Launcher HTML template rendering
+│   ├── health.go                   # Health check for launcher
+│   ├── launcher_test.go            # Launcher tests
+│   └── health_test.go              # Health check tests
+│
+├── server/                         # Core application server
+│   ├── server.go                   # HTTP server setup and route registration
+│   ├── handlers.go                 # All API endpoint handlers
+│   ├── database.go                 # SQLite schema, migrations, and DB helpers
+│   ├── models.go                   # Request/response structs
+│   ├── llm.go                      # Core LLM call (Anthropic/OpenAI/Gemini/Ollama)
+│   ├── salary.go                   # Salary estimation via LLM
+│   ├── company_vetter.go           # LLM company legitimacy vetting (no PII)
+│   ├── gemini.go                   # Gemini AFC helper (no-op for REST API)
+│   ├── company_crawler.go          # Company data crawler (BBB, Glassdoor, LinkedIn)
+│   ├── mx_validator.go             # Email domain MX validation via nslookup (no PII)
+│   ├── scraper.go                  # Job URL scraper (HTML → title/company/description)
+│   ├── prompts.go                  # Prompt templates for job analysis
+│   ├── parsers.go                  # LLM response parsers
+│   ├── penalties.go                # Score penalty logic
+│   ├── skills.go                   # Skills extraction utilities
+│   ├── known_models.go             # Known model definitions per provider
+│   ├── analyzer_config.go          # Analyzer config (models, URLs, env vars)
+│   ├── extract.go                  # Resume/document text extraction
+│   ├── utils.go                    # Shared utilities
+│   ├── analyzer_test.go            # LLM analysis tests
+│   ├── company_crawler_test.go     # Crawler tests
+│   ├── company_vetter_test.go      # Company vetting tests
+│   ├── database_test.go            # DB schema, migration, and helper tests
+│   ├── extract_test.go             # Extraction tests
+│   ├── handlers_test.go            # API endpoint tests
+│   ├── mx_validator_test.go        # MX validation tests
+│   ├── prompts_test.go             # Prompt tests
+│   ├── scraper_test.go             # Scraper tests
+│   ├── skills_test.go              # Skills tests
+│   └── testhelpers_test.go         # Shared test fixtures and helpers
+│
+├── assets/                         # Embedded frontend assets (via go:embed)
+│   ├── assets.go                   # go:embed directive for UI files
+│   └── ui/                         # Shared frontend (vanilla JS + HTML)
+│       ├── index.html              # Jobs list page
+│       ├── job_detail.html         # Job detail page
+│       ├── job_preview.html        # Job preview page
+│       ├── resumes.html            # Resumes page
+│       ├── vetting.html            # Vetting page (companies + recruiters)
+│       ├── static/
+│       │   ├── js/
+│       │   │   └── app.js          # Main frontend JS (~3000 lines)
+│       │   └── css/
+│       │       └── style.css       # Stylesheet
+│       └── launcher/
+│           ├── launcher.html       # Launcher config form
+│           ├── launcher.js         # Launcher frontend logic
+│           └── launcher.css        # Launcher styles
+│
 ├── cmd/
-│   └── testrunner/main.go           Pretty test output with [✓] / [X]
-├── tests_js/
-│   └── test_app.html                Browser-based JS tests (51 tests, no dependencies)
-├── Makefile                         Build, test, and run targets
-├── go.mod
-├── cfg/config.json                  Runtime config — auto-created, never committed
-├── config.example.json              Config template showing all available fields
-└── .github/workflows/
-    └── release.yml                  CI: test + cross-compile + attach to GitHub release
+│   └── testrunner/
+│       └── main.go                 # Test runner entry point
+│
+└── tests_js/
+    └── test_app.html               # Browser-based JS unit tests
 ```
 
 ---
@@ -428,25 +465,24 @@ go vet ./...               # catch common mistakes
 
 ---
 
+**Local model compatibility (Ollama):**
 
-**Branch: v3-advanced**
-This branch builds on v2-advanced and adds Analysis Mode (fast / standard /
-detailed), a progress bar with elapsed time tracking, duration and mode
-stored per analysis, and dynamic context window resolution for Ollama.
-
-**Local model compatibility:**
-
-- `llama3.1:8b` — works in all modes (fast / standard / detailed)
-- `phi3.5:3.8b` — works in all modes (fast / standard / detailed)
+- `llama3.1:8b` — works reliably in all modes (fast / standard / detailed) and for company vetting
 - `llama3.2:3b` — works in all modes (fast / standard / detailed)
+- `phi3.5:3.8b` — works in all modes (fast / standard / detailed)
 - `gemma3:27b` — works in fast and standard modes; detailed mode may take
-   15-20+ minutes on consumer hardware, increase `OLLAMA_TIMEOUT` to 2000s+
+  15-20+ minutes on consumer hardware, increase `OLLAMA_TIMEOUT` to 2000s+
+- `gemma4:e4b` — works reliably in all modes and for company vetting
+- `gemma4:e2b` — works reliably in all modes and for company vetting
+- `mistral` family — **not recommended**, known to produce false skill gap
+  detection and unreliable structured output
 - `nemotron-3-nano` — not compatible, ignores structured output format
-- Anthropic — works reliably in all modes
-For the advanced features without Analysis Mode see
-[v2-advanced](https://github.com/QuaziBit/job-matcher-go/tree/v2-advanced).
-For the stable faster version see
-[main](https://github.com/QuaziBit/job-matcher-go/tree/main).
+
+**Cloud model compatibility:**
+
+- Anthropic (`claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-6`) — works reliably in all modes
+- OpenAI (`gpt-4o-mini`, `gpt-4o`, `gpt-4-turbo`, `o1-mini`, `o1`) — works reliably in all modes
+- Gemini (`gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-pro`, `gemini-2.0-flash`) — works reliably in all modes
 
 ---
 
