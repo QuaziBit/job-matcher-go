@@ -122,6 +122,10 @@ func buildSnippetPrompt(text string) string {
 func parseSnippetResponse(raw string) (SnippetResult, error) {
 	raw = stripThinking(raw)
 
+	if strings.TrimSpace(raw) == "" {
+		return SnippetResult{}, fmt.Errorf("LLM returned an empty response — try a different model or provider.")
+	}
+
 	// Strip markdown fences
 	raw = regexp.MustCompile("(?m)^```(?:json)?\\s*").ReplaceAllString(raw, "")
 	raw = regexp.MustCompile("(?m)\\s*```$").ReplaceAllString(raw, "")
@@ -129,7 +133,7 @@ func parseSnippetResponse(raw string) (SnippetResult, error) {
 	// Find JSON object
 	m := regexp.MustCompile(`(?s)\{.*\}`).FindString(raw)
 	if m == "" {
-		return SnippetResult{}, fmt.Errorf("no JSON object found in snippet response")
+		return SnippetResult{}, fmt.Errorf("no JSON found in response — try a different model or provider. Got: %.100s", raw)
 	}
 
 	var data map[string]interface{}
@@ -375,10 +379,14 @@ func callSnippetOllama(prompt, model string, cfg config.Config) (string, error) 
 		"stream": false,
 		"options": map[string]interface{}{
 			"temperature": 0.0,
-			"num_predict": 400,
+			"num_predict": 1024,
 		},
 	}
+	// Thinking models output <think>...</think> before JSON — need much more tokens.
+	// Non-thinking models get format:json to force clean output.
 	if isThinkingModel(m) {
+		payload["options"].(map[string]interface{})["num_predict"] = 8192
+	} else {
 		payload["format"] = "json"
 	}
 	body, _ := json.Marshal(payload)
@@ -433,14 +441,23 @@ func snippetResolveModel(provider, model string, cfg config.Config) string {
 // parseCompanySnippet is the main entry point — calls LLM and returns parsed data.
 func parseCompanySnippet(text, provider, model string, cfg config.Config) (SnippetResult, error) {
 	prompt := buildSnippetPrompt(text)
-	log.Printf("→ snippet parse provider=%s text_len=%d", provider, len(text))
+	log.Printf("→ snippet parse provider=%s model=%s text_len=%d", provider, snippetResolveModel(provider, model, cfg), len(text))
 	raw, err := callSnippetLLM(prompt, provider, model, cfg)
 	if err != nil {
 		return SnippetResult{}, err
 	}
-	if cfg.ShowMoreLogs {
-		log.Printf("→ snippet raw body:\n%s", raw)
+	log.Printf("→ snippet raw body (len=%d):\n%s", len(raw), raw)
+
+	// Retry once on empty response — small local models are inconsistent
+	if strings.TrimSpace(raw) == "" {
+		log.Printf("→ snippet parse got empty response, retrying once…")
+		raw, err = callSnippetLLM(prompt, provider, model, cfg)
+		if err != nil {
+			return SnippetResult{}, err
+		}
+		log.Printf("→ snippet retry raw body (len=%d):\n%s", len(raw), raw)
 	}
+
 	result, err := parseSnippetResponse(raw)
 	if err != nil {
 		return SnippetResult{}, err

@@ -1586,3 +1586,74 @@ func TestDBUpsertSnippetMeta_UpdatesExistingRow(t *testing.T) {
 		t.Errorf("expected bbb_rating=B, got %q", meta.BBBRating)
 	}
 }
+
+func TestDBDeleteCompanyMeta_RemovesRow(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	if err := dbUpsertSnippetMeta("ToDelete", map[string]interface{}{
+		"glassdoor_rating": 4.2,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	meta, _ := dbGetCompanyMeta("ToDelete")
+	if meta == nil {
+		t.Fatal("expected row before delete")
+	}
+	if err := dbDeleteCompanyMeta("ToDelete"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	meta, _ = dbGetCompanyMeta("ToDelete")
+	if meta != nil {
+		t.Error("expected row to be gone after delete")
+	}
+}
+
+func TestDBDeleteCompanyMeta_NonexistentIsNoOp(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	if err := dbDeleteCompanyMeta("DoesNotExist"); err != nil {
+		t.Errorf("expected no error deleting nonexistent row, got: %v", err)
+	}
+}
+
+func TestDBRenameCompanyMeta_RenamesRow(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	if err := dbUpsertSnippetMeta("OldCo", map[string]interface{}{
+		"glassdoor_rating": 4.2,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := dbRenameCompanyMeta("OldCo", "NewCo"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	old, _ := dbGetCompanyMeta("OldCo")
+	if old != nil {
+		t.Error("expected old name to be gone")
+	}
+	newMeta, _ := dbGetCompanyMeta("NewCo")
+	if newMeta == nil {
+		t.Fatal("expected new name to exist")
+	}
+	if newMeta.GlassdoorRating != 4.2 {
+		t.Errorf("expected rating=4.2, got %v", newMeta.GlassdoorRating)
+	}
+}
+
+func TestDBRenameCompanyMeta_NoOpWhenSameName(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	if err := dbRenameCompanyMeta("Same", "Same"); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestDBRenameCompanyMeta_NoOpWhenNoRow(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	if err := dbRenameCompanyMeta("Ghost", "NewGhost"); err != nil {
+		t.Errorf("expected no error renaming nonexistent row, got: %v", err)
+	}
+}

@@ -2557,3 +2557,121 @@ func TestHandleVettingAPI_MetaEmptyWhenNoCrawlData(t *testing.T) {
 	}
 	t.Fatal("NoCrawlCo not found in response")
 }
+
+// ── DELETE /api/companies/meta ────────────────────────────────────────────────
+
+func TestHandleCompanyMetaDelete_EmptyNameReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/api/companies/meta?company_name=", nil)
+	handleCompanyMeta(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleCompanyMetaDelete_RemovesRow(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Seed meta
+	if err := dbUpsertManualMeta("DeleteMe", map[string]interface{}{
+		"glassdoor_rating": 4.2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Confirm exists
+	meta, _ := dbGetCompanyMeta("DeleteMe")
+	if meta == nil {
+		t.Fatal("expected meta row before delete")
+	}
+
+	// Delete
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/api/companies/meta?company_name=DeleteMe", nil)
+	handleCompanyMeta(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&body)
+	if body["ok"] != true {
+		t.Errorf("expected ok=true, got %v", body["ok"])
+	}
+
+	// Confirm gone
+	meta, _ = dbGetCompanyMeta("DeleteMe")
+	if meta != nil {
+		t.Error("expected meta row to be deleted")
+	}
+}
+
+func TestHandleCompanyMetaDelete_NonexistentReturnsOK(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/api/companies/meta?company_name=GhostCo", nil)
+	handleCompanyMeta(w, r)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestHandleCompanyMeta_WrongMethodReturns404(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/companies/meta?company_name=Acme", nil)
+	handleCompanyMeta(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for POST, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdateJobCompany_RenamesCompanyMeta(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Seed job with company "OldCo"
+	jobID, err := dbInsertJob("https://example.com/rename", "Dev", "OldCo", "VA", "desc")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed company_meta for OldCo
+	if err := dbUpsertSnippetMeta("OldCo", map[string]interface{}{
+		"glassdoor_rating": 4.5,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rename company to NewCo
+	vals := url.Values{}
+	vals.Set("company", "NewCo Inc.")
+	body := strings.NewReader(vals.Encode())
+	req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/jobs/%d/company", jobID), body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handleUpdateJobCompany(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+
+	// OldCo meta should be gone
+	old, _ := dbGetCompanyMeta("OldCo")
+	if old != nil {
+		t.Error("expected OldCo meta to be renamed")
+	}
+
+	// NewCo meta should exist with same data
+	newMeta, _ := dbGetCompanyMeta("NewCo Inc.")
+	if newMeta == nil {
+		t.Fatal("expected NewCo Inc. meta to exist after rename")
+	}
+	if newMeta.GlassdoorRating != 4.5 {
+		t.Errorf("expected glassdoor_rating=4.5, got %v", newMeta.GlassdoorRating)
+	}
+}

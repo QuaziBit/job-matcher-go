@@ -884,3 +884,23 @@ func dbUpsertSnippetMeta(companyName string, fields map[string]interface{}) erro
 func dbUpsertManualMeta(companyName string, fields map[string]interface{}) error {
 	return dbUpsertSnippetMeta(companyName, fields)
 }
+
+// dbDeleteCompanyMeta removes the company_meta row for a company.
+// Returns nil if no row existed (idempotent).
+func dbDeleteCompanyMeta(companyName string) error {
+	_, err := db.Exec("DELETE FROM company_meta WHERE company_name = ?", companyName)
+	return err
+}
+
+// dbRenameCompanyMeta renames a company_meta row when a job's company name changes.
+// No-op if no row exists for oldName.
+func dbRenameCompanyMeta(oldName, newName string) error {
+	if oldName == newName || oldName == "" || newName == "" {
+		return nil
+	}
+	_, err := db.Exec(
+		"UPDATE company_meta SET company_name = ? WHERE company_name = ?",
+		newName, oldName,
+	)
+	return err
+}

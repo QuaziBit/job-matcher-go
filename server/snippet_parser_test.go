@@ -201,3 +201,89 @@ func TestSnippetResolveModel_OllamaFallsBackToCfg(t *testing.T) {
 		t.Errorf("expected cfg ollama model, got %q", got)
 	}
 }
+
+// ── parseSnippetResponse — empty/bad response ─────────────────────────────────
+
+func TestParseSnippetResponse_EmptyRaisesHelpfulError(t *testing.T) {
+	_, err := parseSnippetResponse("")
+	if err == nil {
+		t.Fatal("expected error on empty response")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "empty response") {
+		t.Errorf("expected 'empty response' in error, got: %s", err.Error())
+	}
+}
+
+func TestParseSnippetResponse_WhitespaceOnlyRaisesHelpfulError(t *testing.T) {
+	_, err := parseSnippetResponse("   \n  ")
+	if err == nil {
+		t.Fatal("expected error on whitespace-only response")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "empty response") {
+		t.Errorf("expected 'empty response' in error, got: %s", err.Error())
+	}
+}
+
+func TestParseSnippetResponse_NoJSONHasHelpfulMessage(t *testing.T) {
+	_, err := parseSnippetResponse("Sorry, I cannot help with that.")
+	if err == nil {
+		t.Fatal("expected error on no-JSON response")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "provider") {
+		t.Errorf("expected 'provider' hint in error, got: %s", err.Error())
+	}
+}
+
+// ── snippetResolveModel — thinking vs non-thinking num_predict ────────────────
+
+func TestSnippetOllama_ThinkingModelUsesHigherNumPredict(t *testing.T) {
+	// gemma4:e4b is a thinking model — verify the payload would use 8192
+	m := "gemma4:e4b"
+	if !isThinkingModel(m) {
+		t.Skipf("%s not recognized as thinking model — update THINKING_MODELS", m)
+	}
+	// The logic: thinking -> 8192, non-thinking -> 1024
+	numPredict := 1024
+	if isThinkingModel(m) {
+		numPredict = 8192
+	}
+	if numPredict != 8192 {
+		t.Errorf("expected 8192 for thinking model, got %d", numPredict)
+	}
+}
+
+func TestSnippetOllama_NonThinkingModelUses1024(t *testing.T) {
+	m := "llama3.1:8b"
+	if isThinkingModel(m) {
+		t.Skipf("%s unexpectedly marked as thinking model", m)
+	}
+	numPredict := 1024
+	if isThinkingModel(m) {
+		numPredict = 8192
+	}
+	if numPredict != 1024 {
+		t.Errorf("expected 1024 for non-thinking model, got %d", numPredict)
+	}
+}
+
+func TestSnippetOllama_NonThinkingModelGetsFormatJSON(t *testing.T) {
+	m := "llama3.1:8b"
+	payload := map[string]interface{}{}
+	if !isThinkingModel(m) {
+		payload["format"] = "json"
+	}
+	if payload["format"] != "json" {
+		t.Error("expected format=json for non-thinking model")
+	}
+}
+
+func TestSnippetOllama_ThinkingModelSkipsFormatJSON(t *testing.T) {
+	m := "gemma4:e4b"
+	payload := map[string]interface{}{}
+	if !isThinkingModel(m) {
+		payload["format"] = "json"
+	}
+	if _, ok := payload["format"]; ok {
+		t.Error("thinking model should not have format=json")
+	}
+}

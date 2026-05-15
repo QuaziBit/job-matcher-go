@@ -1039,10 +1039,20 @@ func handleUpdateJobCompany(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	oldCompany := job.Company
 	if err := dbUpdateJobField(id, "company", company); err != nil {
 		log.Printf("✗ dbUpdateJobField company(%d) error: %v", id, err)
 		writeError(w, http.StatusInternalServerError, "Failed to update company.")
 		return
+	}
+	// Rename company_meta row so vetting/crawl data follows the new name
+	if oldCompany != company {
+		if err := dbRenameCompanyMeta(oldCompany, company); err != nil {
+			log.Printf("✗ dbRenameCompanyMeta(%q→%q): %v", oldCompany, company, err)
+			// Non-fatal — job name updated, meta rename failed
+		} else if oldCompany != "" {
+			log.Printf("✓ company_meta renamed: %q → %q", oldCompany, company)
+		}
 	}
 	log.Printf("✓ Job %d company updated to: %q", id, company)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "company": company})
@@ -1925,6 +1935,10 @@ func handleCompanyCrawl(w http.ResponseWriter, r *http.Request) {
 
 // handleCompanyMeta serves GET /api/companies/meta?company_name=...
 func handleCompanyMeta(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		handleCompanyMetaDelete(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.NotFound(w, r)
 		return
@@ -2063,6 +2077,26 @@ func handleParseSnippet(w http.ResponseWriter, r *http.Request) {
 		Found:   true,
 		Data:    fields,
 		Meta:    meta,
+	})
+}
+
+// handleCompanyMetaDelete serves DELETE /api/companies/meta — removes all
+// company_meta for a company (ratings, URLs, LLM vetting).
+func handleCompanyMetaDelete(w http.ResponseWriter, r *http.Request) {
+	companyName := strings.TrimSpace(r.URL.Query().Get("company_name"))
+	if companyName == "" {
+		writeError(w, http.StatusUnprocessableEntity, "company_name is required.")
+		return
+	}
+	if err := dbDeleteCompanyMeta(companyName); err != nil {
+		log.Printf("✗ dbDeleteCompanyMeta(%q): %v", companyName, err)
+		writeError(w, http.StatusInternalServerError, "Failed to delete company meta.")
+		return
+	}
+	log.Printf("✓ delete_company_meta: company=%q", companyName)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":      true,
+		"company": companyName,
 	})
 }
 
