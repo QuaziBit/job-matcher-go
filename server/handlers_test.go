@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -2244,4 +2245,315 @@ func TestHandleEstimateSalary_ThinkingModelNotBlocked(t *testing.T) {
 	if strings.Contains(w.Body.String(), "is not supported for salary estimation") {
 		t.Errorf("thinking model gemma4:e4b should not be blocked by incompatible model list, got: %s", w.Body.String())
 	}
+}
+
+// ── POST /api/companies/parse-snippet ────────────────────────────────────────
+
+func postSnippetForm(fields map[string]string) (*httptest.ResponseRecorder, *http.Request) {
+	vals := url.Values{}
+	for k, v := range fields {
+		vals.Set(k, v)
+	}
+	body := strings.NewReader(vals.Encode())
+	req := httptest.NewRequest(http.MethodPost, "/api/companies/parse-snippet", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return httptest.NewRecorder(), req
+}
+
+func postMetaUpdateForm(fields map[string]string) (*httptest.ResponseRecorder, *http.Request) {
+	vals := url.Values{}
+	for k, v := range fields {
+		vals.Set(k, v)
+	}
+	body := strings.NewReader(vals.Encode())
+	req := httptest.NewRequest(http.MethodPost, "/api/companies/meta/update", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return httptest.NewRecorder(), req
+}
+
+func TestHandleParseSnippet_EmptyNameReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w, r := postSnippetForm(map[string]string{"text": "Glassdoor 4.2 stars"})
+	handleParseSnippet(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleParseSnippet_EmptyTextReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w, r := postSnippetForm(map[string]string{"company_name": "Acme", "text": ""})
+	handleParseSnippet(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleParseSnippet_TextTooLongReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w, r := postSnippetForm(map[string]string{
+		"company_name": "Acme",
+		"text":         strings.Repeat("x", 6000),
+	})
+	handleParseSnippet(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleParseSnippet_UnsupportedProviderReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w, r := postSnippetForm(map[string]string{
+		"company_name": "Acme",
+		"text":         "Glassdoor 4.2 stars",
+		"provider":     "not-a-provider",
+	})
+	handleParseSnippet(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleParseSnippet_WrongMethodReturns404(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/companies/parse-snippet", nil)
+	handleParseSnippet(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+// ── POST /api/companies/meta/update ──────────────────────────────────────────
+
+func TestHandleCompanyMetaUpdate_EmptyNameReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w, r := postMetaUpdateForm(map[string]string{"glassdoor_rating": "4.2"})
+	handleCompanyMetaUpdate(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleCompanyMetaUpdate_NoFieldsReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w, r := postMetaUpdateForm(map[string]string{"company_name": "Acme"})
+	handleCompanyMetaUpdate(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleCompanyMetaUpdate_InvalidRatingReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w, r := postMetaUpdateForm(map[string]string{
+		"company_name": "Acme", "glassdoor_rating": "99",
+	})
+	handleCompanyMetaUpdate(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleCompanyMetaUpdate_InvalidURLReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w, r := postMetaUpdateForm(map[string]string{
+		"company_name": "Acme", "glassdoor_url": "not-a-url",
+	})
+	handleCompanyMetaUpdate(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleCompanyMetaUpdate_SavesRating(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w, r := postMetaUpdateForm(map[string]string{
+		"company_name": "RatingCo", "glassdoor_rating": "4.2",
+	})
+	handleCompanyMetaUpdate(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&body)
+	if body["ok"] != true {
+		t.Errorf("expected ok=true, got %v", body["ok"])
+	}
+	updated, _ := body["updated"].([]interface{})
+	found := false
+	for _, u := range updated {
+		if u == "glassdoor_rating" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected glassdoor_rating in updated, got %v", updated)
+	}
+}
+
+func TestHandleCompanyMetaUpdate_SavesBBBGrade(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w, r := postMetaUpdateForm(map[string]string{
+		"company_name": "BBBCo", "bbb_rating": "a+",
+	})
+	handleCompanyMetaUpdate(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	meta, err := dbGetCompanyMeta("BBBCo")
+	if err != nil || meta == nil {
+		t.Fatal("expected company meta row")
+	}
+	if meta.BBBRating != "A+" {
+		t.Errorf("expected BBBRating=A+, got %q", meta.BBBRating)
+	}
+}
+
+func TestHandleCompanyMetaUpdate_SavesIndeedRating(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w, r := postMetaUpdateForm(map[string]string{
+		"company_name": "IndeedCo", "indeed_rating": "3.8",
+	})
+	handleCompanyMetaUpdate(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	meta, err := dbGetCompanyMeta("IndeedCo")
+	if err != nil || meta == nil {
+		t.Fatal("expected company meta row")
+	}
+	if meta.IndeedRating != 3.8 {
+		t.Errorf("expected IndeedRating=3.8, got %v", meta.IndeedRating)
+	}
+}
+
+func TestHandleCompanyMetaUpdate_SavesURLs(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w, r := postMetaUpdateForm(map[string]string{
+		"company_name": "URLCo",
+		"linkedin_url": "https://linkedin.com/company/urlco",
+	})
+	handleCompanyMetaUpdate(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	meta, _ := dbGetCompanyMeta("URLCo")
+	if meta == nil || meta.LinkedInURL != "https://linkedin.com/company/urlco" {
+		t.Errorf("expected linkedin_url saved, got %v", meta)
+	}
+}
+
+func TestHandleCompanyMetaUpdate_WrongMethodReturns404(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/companies/meta/update", nil)
+	handleCompanyMetaUpdate(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+// ── GET /api/vetting — meta crawl fields ─────────────────────────────────────
+
+func TestHandleVettingAPI_MetaIncludesCrawlFields(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Seed a job
+	dbInsertJob("https://example.com/metaco", "Dev", "MetaCo", "VA", "desc")
+
+	// Save crawl meta
+	if err := dbUpsertManualMeta("MetaCo", map[string]interface{}{
+		"glassdoor_rating": 4.3,
+		"bbb_rating":       "A+",
+		"indeed_rating":    3.9,
+	}); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/vetting", nil)
+	w := httptest.NewRecorder()
+	handleVettingAPI(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Companies []struct {
+			Company string                 `json:"company"`
+			Meta    map[string]interface{} `json:"meta"`
+		} `json:"companies"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var metaco *map[string]interface{}
+	for i := range body.Companies {
+		if body.Companies[i].Company == "MetaCo" {
+			metaco = &body.Companies[i].Meta
+			break
+		}
+	}
+	if metaco == nil {
+		t.Fatal("MetaCo not found in response")
+	}
+	if (*metaco)["glassdoor_rating"] == nil {
+		t.Error("expected glassdoor_rating in meta")
+	}
+	if (*metaco)["bbb_rating"] != "A+" {
+		t.Errorf("expected bbb_rating=A+, got %v", (*metaco)["bbb_rating"])
+	}
+	if (*metaco)["indeed_rating"] == nil {
+		t.Error("expected indeed_rating in meta")
+	}
+}
+
+func TestHandleVettingAPI_MetaEmptyWhenNoCrawlData(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	dbInsertJob("https://example.com/nocrawl", "Dev", "NoCrawlCo", "VA", "desc")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/vetting", nil)
+	w := httptest.NewRecorder()
+	handleVettingAPI(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var body struct {
+		Companies []struct {
+			Company string                 `json:"company"`
+			Meta    map[string]interface{} `json:"meta"`
+		} `json:"companies"`
+	}
+	json.NewDecoder(w.Body).Decode(&body)
+
+	for _, c := range body.Companies {
+		if c.Company == "NoCrawlCo" {
+			if c.Meta["glassdoor_rating"] != nil {
+				t.Errorf("expected nil glassdoor_rating, got %v", c.Meta["glassdoor_rating"])
+			}
+			return
+		}
+	}
+	t.Fatal("NoCrawlCo not found in response")
 }

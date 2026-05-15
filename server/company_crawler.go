@@ -47,6 +47,9 @@ type CompanyCrawlResult struct {
 	LinkedInFounded      string
 	BBBURL               string
 	BBBRating            string
+	IndeedURL            string
+	IndeedRating         float64
+	IndeedReviewCount    int
 }
 
 // ── HTTP helper ───────────────────────────────────────────────────────────────

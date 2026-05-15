@@ -108,6 +108,9 @@ func createSchema() error {
 		linkedin_founded       TEXT DEFAULT '',
 		bbb_url                TEXT DEFAULT '',
 		bbb_rating             TEXT DEFAULT '',
+		indeed_url             TEXT DEFAULT '',
+		indeed_rating          REAL DEFAULT NULL,
+		indeed_review_count    INTEGER DEFAULT NULL,
 		crawled_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		llm_assessment         TEXT DEFAULT NULL,
 		llm_risk_level         TEXT DEFAULT NULL,
@@ -140,6 +143,9 @@ func runMigrations() {
 		"ALTER TABLE company_meta ADD COLUMN llm_provider TEXT DEFAULT NULL",
 		"ALTER TABLE company_meta ADD COLUMN llm_model TEXT DEFAULT NULL",
 		"ALTER TABLE company_meta ADD COLUMN llm_assessed_at TIMESTAMP DEFAULT NULL",
+		"ALTER TABLE company_meta ADD COLUMN indeed_url TEXT DEFAULT ''",
+		"ALTER TABLE company_meta ADD COLUMN indeed_rating REAL DEFAULT NULL",
+		"ALTER TABLE company_meta ADD COLUMN indeed_review_count INTEGER DEFAULT NULL",
 	}
 	for _, m := range migrations {
 		_, _ = db.Exec(m)
@@ -692,6 +698,9 @@ type CompanyMeta struct {
 	LinkedInFounded      string  `json:"linkedin_founded"`
 	BBBURL               string  `json:"bbb_url"`
 	BBBRating            string  `json:"bbb_rating"`
+	IndeedURL            string  `json:"indeed_url"`
+	IndeedRating         float64 `json:"indeed_rating"`
+	IndeedReviewCount    int     `json:"indeed_review_count"`
 	CrawledAt            string  `json:"crawled_at"`
 	LLMAssessment        string  `json:"llm_assessment,omitempty"`
 	LLMRiskLevel         string  `json:"llm_risk_level,omitempty"`
@@ -707,6 +716,7 @@ func dbGetCompanyMeta(companyName string) (*CompanyMeta, error) {
 		       COALESCE(glassdoor_url,''), COALESCE(glassdoor_rating,0), COALESCE(glassdoor_review_count,0),
 		       COALESCE(linkedin_url,''), COALESCE(linkedin_employee_count,''), COALESCE(linkedin_founded,''),
 		       COALESCE(bbb_url,''), COALESCE(bbb_rating,''),
+		       COALESCE(indeed_url,''), COALESCE(indeed_rating,0), COALESCE(indeed_review_count,0),
 		       COALESCE(crawled_at,''),
 		       llm_assessment, llm_risk_level, llm_signals, llm_provider, llm_model, llm_assessed_at
 		FROM company_meta WHERE company_name = ?`, companyName)
@@ -717,6 +727,7 @@ func dbGetCompanyMeta(companyName string) (*CompanyMeta, error) {
 		&m.GlassdoorURL, &m.GlassdoorRating, &m.GlassdoorReviewCount,
 		&m.LinkedInURL, &m.LinkedInEmployees, &m.LinkedInFounded,
 		&m.BBBURL, &m.BBBRating,
+		&m.IndeedURL, &m.IndeedRating, &m.IndeedReviewCount,
 		&m.CrawledAt,
 		&llmAssessment, &llmRisk, &llmSignals, &llmProvider, &llmModel, &llmAssessedAt,
 	)
@@ -785,8 +796,9 @@ func dbUpsertCompanyMeta(companyName string, r CompanyCrawlResult) error {
 		INSERT INTO company_meta
 			(company_name, glassdoor_url, glassdoor_rating, glassdoor_review_count,
 			 linkedin_url, linkedin_employee_count, linkedin_founded,
-			 bbb_url, bbb_rating, crawled_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			 bbb_url, bbb_rating,
+			 indeed_url, indeed_rating, indeed_review_count, crawled_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(company_name) DO UPDATE SET
 			glassdoor_url          = excluded.glassdoor_url,
 			glassdoor_rating       = excluded.glassdoor_rating,
@@ -796,11 +808,15 @@ func dbUpsertCompanyMeta(companyName string, r CompanyCrawlResult) error {
 			linkedin_founded       = excluded.linkedin_founded,
 			bbb_url                = excluded.bbb_url,
 			bbb_rating             = excluded.bbb_rating,
+			indeed_url             = excluded.indeed_url,
+			indeed_rating          = excluded.indeed_rating,
+			indeed_review_count    = excluded.indeed_review_count,
 			crawled_at             = CURRENT_TIMESTAMP`,
 		companyName,
 		r.GlassdoorURL, r.GlassdoorRating, r.GlassdoorReviewCount,
 		r.LinkedInURL, r.LinkedInEmployees, r.LinkedInFounded,
 		r.BBBURL, r.BBBRating,
+		r.IndeedURL, r.IndeedRating, r.IndeedReviewCount,
 	)
 	return err
 }
@@ -820,4 +836,51 @@ func dbUpsertCompanyVetting(companyName, riskLevel, assessment, signalsJSON, pro
 		companyName, riskLevel, assessment, signalsJSON, provider, model,
 	)
 	return err
+}
+
+// dbUpsertSnippetMeta merges snippet-parsed fields into company_meta.
+// Only non-zero fields in the map are written.
+func dbUpsertSnippetMeta(companyName string, fields map[string]interface{}) error {
+	if len(fields) == 0 {
+		return nil
+	}
+	cols := []string{}
+	vals := []interface{}{companyName}
+	updates := []string{}
+
+	for _, col := range []string{
+		"glassdoor_url", "glassdoor_rating", "glassdoor_review_count",
+		"indeed_url", "indeed_rating", "indeed_review_count",
+		"bbb_url", "bbb_rating",
+		"linkedin_url", "linkedin_employee_count", "linkedin_founded",
+	} {
+		if v, ok := fields[col]; ok {
+			cols = append(cols, col)
+			vals = append(vals, v)
+			updates = append(updates, col+" = excluded."+col)
+		}
+	}
+
+	if len(cols) == 0 {
+		return nil
+	}
+
+	colList := "company_name, " + strings.Join(cols, ", ")
+	placeholders := "?" + strings.Repeat(", ?", len(cols))
+	updateList := strings.Join(updates, ", ")
+
+	query := fmt.Sprintf(`
+		INSERT INTO company_meta (%s)
+		VALUES (%s)
+		ON CONFLICT(company_name) DO UPDATE SET %s`,
+		colList, placeholders, updateList)
+
+	_, err := db.Exec(query, vals...)
+	return err
+}
+
+// dbUpsertManualMeta writes manually entered fields into company_meta.
+// Same pattern as dbUpsertSnippetMeta but called from meta/update endpoint.
+func dbUpsertManualMeta(companyName string, fields map[string]interface{}) error {
+	return dbUpsertSnippetMeta(companyName, fields)
 }

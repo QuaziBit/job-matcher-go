@@ -231,6 +231,24 @@ type CompanyVettingResponse struct {
 	Model       string   `json:"model"`
 }
 
+// ParseSnippetResponse is returned by POST /api/companies/parse-snippet.
+type ParseSnippetResponse struct {
+	OK      bool                   `json:"ok"`
+	Company string                 `json:"company"`
+	Found   bool                   `json:"found"`
+	Message string                 `json:"message,omitempty"`
+	Data    map[string]interface{} `json:"data,omitempty"`
+	Meta    interface{}            `json:"meta,omitempty"`
+}
+
+// UpdateMetaResponse is returned by POST /api/companies/meta/update.
+type UpdateMetaResponse struct {
+	OK      bool                   `json:"ok"`
+	Company string                 `json:"company"`
+	Updated []string               `json:"updated"`
+	Meta    interface{}            `json:"meta,omitempty"`
+}
+
 // ── API response helpers ──────────────────────────────────────────────────────
 
 type APIError struct {

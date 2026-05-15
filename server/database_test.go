@@ -1518,3 +1518,71 @@ func TestDBUpsertCompanyVetting_CreatesRowIfNotExists(t *testing.T) {
 		t.Errorf("expected risk=unknown, got %q", row.LLMRiskLevel)
 	}
 }
+
+func TestInitDB_CompanyMetaHasIndeedColumns(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	want := []string{"indeed_url", "indeed_rating", "indeed_review_count"}
+	cols := companyMetaColumnSet(t)
+	for _, name := range want {
+		if !cols[name] {
+			t.Errorf("company_meta missing column %q (have: %v)", name, cols)
+		}
+	}
+}
+
+func TestDBUpsertSnippetMeta_StoresAndRetrieves(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	fields := map[string]interface{}{
+		"glassdoor_rating":       4.2,
+		"glassdoor_review_count": 500,
+		"glassdoor_url":          "https://glassdoor.com/acme",
+		"bbb_rating":             "A+",
+		"indeed_rating":          3.8,
+		"indeed_review_count":    200,
+	}
+	if err := dbUpsertSnippetMeta("SnippetCo", fields); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	meta, err := dbGetCompanyMeta("SnippetCo")
+	if err != nil || meta == nil {
+		t.Fatalf("get meta: err=%v row=%v", err, meta)
+	}
+	if meta.GlassdoorRating != 4.2 {
+		t.Errorf("expected glassdoor_rating=4.2, got %v", meta.GlassdoorRating)
+	}
+	if meta.BBBRating != "A+" {
+		t.Errorf("expected bbb_rating=A+, got %q", meta.BBBRating)
+	}
+	if meta.IndeedRating != 3.8 {
+		t.Errorf("expected indeed_rating=3.8, got %v", meta.IndeedRating)
+	}
+}
+
+func TestDBUpsertSnippetMeta_EmptyFieldsNoOp(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	if err := dbUpsertSnippetMeta("EmptyCo", map[string]interface{}{}); err != nil {
+		t.Fatalf("expected no error on empty fields, got: %v", err)
+	}
+}
+
+func TestDBUpsertSnippetMeta_UpdatesExistingRow(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	_ = dbUpsertSnippetMeta("UpdateCo", map[string]interface{}{"glassdoor_rating": 3.5})
+	_ = dbUpsertSnippetMeta("UpdateCo", map[string]interface{}{"glassdoor_rating": 4.8, "bbb_rating": "B"})
+
+	meta, _ := dbGetCompanyMeta("UpdateCo")
+	if meta == nil || meta.GlassdoorRating != 4.8 {
+		t.Errorf("expected updated rating=4.8, got %v", meta)
+	}
+	if meta.BBBRating != "B" {
+		t.Errorf("expected bbb_rating=B, got %q", meta.BBBRating)
+	}
+}

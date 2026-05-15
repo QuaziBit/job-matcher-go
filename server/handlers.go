@@ -101,6 +101,8 @@ func registerRoutes(mux *http.ServeMux, cfg config.Config) {
 	mux.HandleFunc("/api/providers/models", handleProviderModels)
 	mux.HandleFunc("/api/companies/crawl", handleCompanyCrawl)
 	mux.HandleFunc("/api/companies/meta", handleCompanyMeta)
+	mux.HandleFunc("/api/companies/meta/update", handleCompanyMetaUpdate)
+	mux.HandleFunc("/api/companies/parse-snippet", handleParseSnippet)
 	mux.HandleFunc("/api/companies/vet", handleCompanyVet)
 	mux.HandleFunc("/api/providers/status", handleProvidersStatus)
 	mux.HandleFunc("/api/email/validate-domain", handleEmailValidateDomain)
@@ -189,7 +191,12 @@ func fetchVettingLLMMetaForCompanies(names []string) (map[string]map[string]inte
 		return out, nil
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")
-	query := `SELECT company_name, llm_risk_level, llm_assessment, llm_signals, llm_provider, llm_model, llm_assessed_at
+	query := `SELECT company_name,
+		glassdoor_url, glassdoor_rating, glassdoor_review_count,
+		linkedin_url, linkedin_employee_count, linkedin_founded,
+		bbb_url, bbb_rating,
+		COALESCE(indeed_url,''), COALESCE(indeed_rating,0), COALESCE(indeed_review_count,0),
+		llm_risk_level, llm_assessment, llm_signals, llm_provider, llm_model, llm_assessed_at
 		FROM company_meta WHERE company_name IN (` + placeholders + `)`
 	args := make([]interface{}, len(names))
 	for i, n := range names {
@@ -202,8 +209,18 @@ func fetchVettingLLMMetaForCompanies(names []string) (map[string]map[string]inte
 	defer rows.Close()
 	for rows.Next() {
 		var company string
+		var gdURL, liURL, liEmp, liFounded, bbbURL, bbbRating, indeedURL string
+		var gdRating, indeedRating sql.NullFloat64
+		var gdReviews, indeedReviews sql.NullInt64
 		var risk, assess, sigs, prov, mod, assessed sql.NullString
-		if err := rows.Scan(&company, &risk, &assess, &sigs, &prov, &mod, &assessed); err != nil {
+		if err := rows.Scan(
+			&company,
+			&gdURL, &gdRating, &gdReviews,
+			&liURL, &liEmp, &liFounded,
+			&bbbURL, &bbbRating,
+			&indeedURL, &indeedRating, &indeedReviews,
+			&risk, &assess, &sigs, &prov, &mod, &assessed,
+		); err != nil {
 			return nil, err
 		}
 		var signals []interface{}
@@ -214,16 +231,43 @@ func fetchVettingLLMMetaForCompanies(names []string) (map[string]map[string]inte
 			signals = []interface{}{}
 		}
 		meta := map[string]interface{}{
-			"llm_risk_level":  nullStrPtr(risk),
-			"llm_assessment":  nullStrPtr(assess),
-			"llm_signals":     signals,
-			"llm_provider":    nullStrPtr(prov),
-			"llm_model":       nullStrPtr(mod),
-			"llm_assessed_at": nullStrPtr(assessed),
+			"glassdoor_url":           gdURL,
+			"glassdoor_rating":        nullFloat64Val(gdRating),
+			"glassdoor_review_count":  nullInt64Val(gdReviews),
+			"linkedin_url":            liURL,
+			"linkedin_employee_count": liEmp,
+			"linkedin_founded":        liFounded,
+			"bbb_url":                 bbbURL,
+			"bbb_rating":              bbbRating,
+			"indeed_url":              indeedURL,
+			"indeed_rating":           nullFloat64Val(indeedRating),
+			"indeed_review_count":     nullInt64Val(indeedReviews),
+			"llm_risk_level":          nullStrPtr(risk),
+			"llm_assessment":          nullStrPtr(assess),
+			"llm_signals":             signals,
+			"llm_provider":            nullStrPtr(prov),
+			"llm_model":               nullStrPtr(mod),
+			"llm_assessed_at":         nullStrPtr(assessed),
 		}
 		out[company] = meta
 	}
 	return out, rows.Err()
+}
+
+// nullFloat64Val returns nil if the NullFloat64 is not valid or zero.
+func nullFloat64Val(n sql.NullFloat64) interface{} {
+	if !n.Valid || n.Float64 == 0 {
+		return nil
+	}
+	return n.Float64
+}
+
+// nullInt64Val returns nil if the NullInt64 is not valid or zero.
+func nullInt64Val(n sql.NullInt64) interface{} {
+	if !n.Valid || n.Int64 == 0 {
+		return nil
+	}
+	return int(n.Int64)
 }
 
 func nullStrPtr(ns sql.NullString) interface{} {
@@ -1952,6 +1996,169 @@ func companyMetaToVettingMeta(m *CompanyMeta) map[string]interface{} {
 		"bbb_url":                  m.BBBURL,
 		"bbb_rating":               m.BBBRating,
 	}
+}
+
+// handleParseSnippet serves POST /api/companies/parse-snippet.
+// Accepts pasted Google search text and uses LLM to extract company ratings.
+func handleParseSnippet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	companyName := strings.TrimSpace(r.FormValue("company_name"))
+	text        := strings.TrimSpace(r.FormValue("text"))
+	provider    := strings.TrimSpace(strings.ToLower(r.FormValue("provider")))
+	model       := strings.TrimSpace(r.FormValue("model"))
+
+	if companyName == "" {
+		writeError(w, http.StatusUnprocessableEntity, "company_name is required.")
+		return
+	}
+	if text == "" {
+		writeError(w, http.StatusUnprocessableEntity, "text is required.")
+		return
+	}
+	if len(text) > 5000 {
+		writeError(w, http.StatusUnprocessableEntity, "text too long (max 5000 chars).")
+		return
+	}
+	if provider == "" {
+		provider = "anthropic"
+	}
+
+	cfg := appCfg
+	result, err := parseCompanySnippet(text, provider, model, cfg)
+	if err != nil {
+		log.Printf("✗ parseCompanySnippet(%q): %v", companyName, err)
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+
+	if !result.HasData() {
+		writeJSON(w, http.StatusOK, ParseSnippetResponse{
+			OK:      true,
+			Company: companyName,
+			Found:   false,
+			Message: "No rating data could be extracted from the pasted text.",
+		})
+		return
+	}
+
+	fields := result.ToMap()
+	if err := dbUpsertSnippetMeta(companyName, fields); err != nil {
+		log.Printf("✗ dbUpsertSnippetMeta(%q): %v", companyName, err)
+		writeError(w, http.StatusInternalServerError, "Failed to save extracted data.")
+		return
+	}
+
+	meta, _ := dbGetCompanyMeta(companyName)
+	log.Printf("✓ parse-snippet: company=%q fields=%d", companyName, len(fields))
+	writeJSON(w, http.StatusOK, ParseSnippetResponse{
+		OK:      true,
+		Company: companyName,
+		Found:   true,
+		Data:    fields,
+		Meta:    meta,
+	})
+}
+
+// handleCompanyMetaUpdate serves POST /api/companies/meta/update.
+// Manually saves ratings, review counts, and URLs for a company.
+func handleCompanyMetaUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	companyName := strings.TrimSpace(r.FormValue("company_name"))
+	if companyName == "" {
+		writeError(w, http.StatusUnprocessableEntity, "company_name is required.")
+		return
+	}
+
+	fields := map[string]interface{}{}
+	updated := []string{}
+
+	// Ratings
+	if v := strings.TrimSpace(r.FormValue("glassdoor_rating")); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 1.0 || f > 5.0 {
+			writeError(w, http.StatusUnprocessableEntity, "glassdoor_rating must be between 1 and 5.")
+			return
+		}
+		fields["glassdoor_rating"] = f
+		updated = append(updated, "glassdoor_rating")
+	}
+	if v := strings.TrimSpace(r.FormValue("glassdoor_review_count")); v != "" {
+		i, err := strconv.Atoi(v)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "glassdoor_review_count must be an integer.")
+			return
+		}
+		fields["glassdoor_review_count"] = i
+		updated = append(updated, "glassdoor_review_count")
+	}
+	if v := strings.TrimSpace(r.FormValue("indeed_rating")); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 1.0 || f > 5.0 {
+			writeError(w, http.StatusUnprocessableEntity, "indeed_rating must be between 1 and 5.")
+			return
+		}
+		fields["indeed_rating"] = f
+		updated = append(updated, "indeed_rating")
+	}
+	if v := strings.TrimSpace(r.FormValue("indeed_review_count")); v != "" {
+		i, err := strconv.Atoi(v)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "indeed_review_count must be an integer.")
+			return
+		}
+		fields["indeed_review_count"] = i
+		updated = append(updated, "indeed_review_count")
+	}
+	if v := strings.TrimSpace(r.FormValue("bbb_rating")); v != "" {
+		fields["bbb_rating"] = strings.ToUpper(v)
+		updated = append(updated, "bbb_rating")
+	}
+
+	// URLs
+	for _, field := range []string{"glassdoor_url", "indeed_url", "bbb_url", "linkedin_url"} {
+		if v := strings.TrimSpace(r.FormValue(field)); v != "" {
+			if !strings.HasPrefix(v, "http") {
+				writeError(w, http.StatusUnprocessableEntity, field+" must start with http:// or https://")
+				return
+			}
+			fields[field] = v
+			updated = append(updated, field)
+		}
+	}
+
+	if len(fields) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "No fields provided to update.")
+		return
+	}
+
+	if err := dbUpsertManualMeta(companyName, fields); err != nil {
+		log.Printf("✗ dbUpsertManualMeta(%q): %v", companyName, err)
+		writeError(w, http.StatusInternalServerError, "Failed to save manual data.")
+		return
+	}
+
+	meta, _ := dbGetCompanyMeta(companyName)
+	log.Printf("✓ meta/update: company=%q fields=%v", companyName, updated)
+	writeJSON(w, http.StatusOK, UpdateMetaResponse{
+		OK:      true,
+		Company: companyName,
+		Updated: updated,
+		Meta:    meta,
+	})
 }
 
 // handleCompanyVet serves POST /api/companies/vet — LLM company vetting with 7-day cache.
