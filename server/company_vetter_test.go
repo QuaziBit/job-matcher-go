@@ -247,3 +247,32 @@ func TestVettingResolveModel_GeminiDefault(t *testing.T) {
 		t.Error("expected non-empty default gemini model")
 	}
 }
+
+func TestBuildCompanyPrompt_IncludesIndeedRating(t *testing.T) {
+	meta := map[string]interface{}{
+		"indeed_rating":       3.8,
+		"indeed_review_count": 8,
+	}
+	prompt := buildCompanyPrompt("Co", meta)
+	if !strings.Contains(prompt, "3.8") {
+		t.Error("expected indeed_rating in prompt")
+	}
+	if !strings.Contains(prompt, "8") {
+		t.Error("expected indeed_review_count in prompt")
+	}
+}
+
+func TestBuildCompanyPrompt_IndeedNoListingWhenEmpty(t *testing.T) {
+	prompt := buildCompanyPrompt("Co", map[string]interface{}{})
+	if !strings.Contains(prompt, "Indeed: no listing found") {
+		t.Errorf("expected 'Indeed: no listing found', got:\n%s", prompt)
+	}
+}
+
+func TestBuildCompanyPrompt_IndeedListedNoRating(t *testing.T) {
+	meta := map[string]interface{}{"indeed_url": "https://indeed.com/cmp/co"}
+	prompt := buildCompanyPrompt("Co", meta)
+	if !strings.Contains(prompt, "Indeed: listed but no rating available") {
+		t.Errorf("expected 'Indeed: listed but no rating available', got:\n%s", prompt)
+	}
+}

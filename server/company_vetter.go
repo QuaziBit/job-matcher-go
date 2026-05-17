@@ -86,6 +86,22 @@ func buildCompanyPrompt(companyName string, meta map[string]interface{}) string 
 		lines = append(lines, "Glassdoor: no listing found")
 	}
 
+	// Indeed
+	inRatingRaw, hasINRating := metaTruthyIndeedRating(meta)
+	inReviewsRaw, hasINReviews := metaTruthyIndeedReviews(meta)
+	inURL := strings.TrimSpace(metaString(meta, "indeed_url"))
+	if hasINRating {
+		revStr := ""
+		if hasINReviews {
+			revStr = fmt.Sprintf(" (%d reviews)", inReviewsRaw)
+		}
+		lines = append(lines, fmt.Sprintf("Indeed rating: %s/5%s", formatRating(inRatingRaw), revStr))
+	} else if inURL != "" {
+		lines = append(lines, "Indeed: listed but no rating available")
+	} else {
+		lines = append(lines, "Indeed: no listing found")
+	}
+
 	liEmployees := strings.TrimSpace(metaString(meta, "linkedin_employee_count"))
 	liFounded := strings.TrimSpace(metaString(meta, "linkedin_founded"))
 	liURL := strings.TrimSpace(metaString(meta, "linkedin_url"))
@@ -167,6 +183,66 @@ func metaTruthyGlassdoorReviews(meta map[string]interface{}) (int, bool) {
 		return 0, false
 	}
 	v, ok := meta["glassdoor_review_count"]
+	if !ok || v == nil {
+		return 0, false
+	}
+	switch t := v.(type) {
+	case float64:
+		return int(t), t != 0
+	case int:
+		return t, t != 0
+	case int64:
+		return int(t), t != 0
+	case json.Number:
+		i64, err := t.Int64()
+		return int(i64), err == nil && i64 != 0
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return 0, false
+		}
+		n, err := strconv.Atoi(s)
+		return n, err == nil && n != 0
+	default:
+		return 0, false
+	}
+}
+
+func metaTruthyIndeedRating(meta map[string]interface{}) (float64, bool) {
+	if meta == nil {
+		return 0, false
+	}
+	v, ok := meta["indeed_rating"]
+	if !ok || v == nil {
+		return 0, false
+	}
+	switch t := v.(type) {
+	case float64:
+		return t, t != 0
+	case int:
+		return float64(t), t != 0
+	case int64:
+		return float64(t), t != 0
+	case json.Number:
+		f, err := t.Float64()
+		return f, err == nil && f != 0
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return 0, false
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		return f, err == nil && f != 0
+	default:
+		return 0, false
+	}
+}
+
+func metaTruthyIndeedReviews(meta map[string]interface{}) (int, bool) {
+	if meta == nil {
+		return 0, false
+	}
+	v, ok := meta["indeed_review_count"]
 	if !ok || v == nil {
 		return 0, false
 	}
