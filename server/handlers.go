@@ -196,6 +196,7 @@ func fetchVettingLLMMetaForCompanies(names []string) (map[string]map[string]inte
 		linkedin_url, linkedin_employee_count, linkedin_founded,
 		bbb_url, bbb_rating,
 		COALESCE(indeed_url,''), COALESCE(indeed_rating,0), COALESCE(indeed_review_count,0),
+		COALESCE(company_url,''),
 		llm_risk_level, llm_assessment, llm_signals, llm_provider, llm_model, llm_assessed_at
 		FROM company_meta WHERE company_name IN (` + placeholders + `)`
 	args := make([]interface{}, len(names))
@@ -209,7 +210,7 @@ func fetchVettingLLMMetaForCompanies(names []string) (map[string]map[string]inte
 	defer rows.Close()
 	for rows.Next() {
 		var company string
-		var gdURL, liURL, liEmp, liFounded, bbbURL, bbbRating, indeedURL string
+		var gdURL, liURL, liEmp, liFounded, bbbURL, bbbRating, indeedURL, companyURL string
 		var gdRating, indeedRating sql.NullFloat64
 		var gdReviews, indeedReviews sql.NullInt64
 		var risk, assess, sigs, prov, mod, assessed sql.NullString
@@ -219,6 +220,7 @@ func fetchVettingLLMMetaForCompanies(names []string) (map[string]map[string]inte
 			&liURL, &liEmp, &liFounded,
 			&bbbURL, &bbbRating,
 			&indeedURL, &indeedRating, &indeedReviews,
+			&companyURL,
 			&risk, &assess, &sigs, &prov, &mod, &assessed,
 		); err != nil {
 			return nil, err
@@ -242,6 +244,7 @@ func fetchVettingLLMMetaForCompanies(names []string) (map[string]map[string]inte
 			"indeed_url":              indeedURL,
 			"indeed_rating":           nullFloat64Val(indeedRating),
 			"indeed_review_count":     nullInt64Val(indeedReviews),
+			"company_url":             companyURL,
 			"llm_risk_level":          nullStrPtr(risk),
 			"llm_assessment":          nullStrPtr(assess),
 			"llm_signals":             signals,
@@ -723,6 +726,11 @@ func handleAddJobManual(w http.ResponseWriter, r *http.Request) {
 	company := strings.TrimSpace(r.FormValue("company"))
 	location := strings.TrimSpace(r.FormValue("location"))
 	sourceURL := strings.TrimSpace(r.FormValue("source_url"))
+	companyURL := strings.TrimSpace(r.FormValue("company_url"))
+	// Silently ignore invalid company_url
+	if companyURL != "" && !strings.HasPrefix(companyURL, "http://") && !strings.HasPrefix(companyURL, "https://") {
+		companyURL = ""
+	}
 	description := cleanText(r.FormValue("description"))
 
 	log.Printf("→ Manual job: title=%q company=%q location=%q desc_len=%d", title, company, location, len(description))
@@ -768,6 +776,17 @@ func handleAddJobManual(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("dbInsertJob (manual) error: %v", err))
 		return
+	}
+	// Save and sync company_url
+	if companyURL != "" {
+		if err := dbUpdateJobCompanyURL(id, companyURL); err != nil {
+			log.Printf("✗ dbUpdateJobCompanyURL(%d) error: %v", id, err)
+		}
+		if company != "" {
+			if err := dbSyncCompanyURLToMeta(company, companyURL); err != nil {
+				log.Printf("✗ dbSyncCompanyURLToMeta(%q) error: %v", company, err)
+			}
+		}
 	}
 	log.Printf("✓ Manual job saved id=%d: %q", id, title)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"job_id": id, "title": title, "company": company})
@@ -868,6 +887,10 @@ func handleJobActions(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/location") {
 		handleUpdateJobLocation(w, r)
+		return
+	}
+	if r.Method == http.MethodPatch && strings.HasSuffix(path, "/company-url") {
+		handleUpdateJobCompanyURL(w, r)
 		return
 	}
 
@@ -1087,6 +1110,44 @@ func handleUpdateJobLocation(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("✓ Job %d location updated to: %q", id, location)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "location": location})
+}
+
+// handleUpdateJobCompanyURL serves PATCH /api/jobs/{id}/company-url
+func handleUpdateJobCompanyURL(w http.ResponseWriter, r *http.Request) {
+	if err := parseAnyForm(r); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to parse form: %v", err))
+		return
+	}
+	id, err := parseIDFromPath(r.URL.Path, "/api/jobs/")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	companyURL := strings.TrimSpace(r.FormValue("company_url"))
+	if companyURL != "" && !strings.HasPrefix(companyURL, "http://") && !strings.HasPrefix(companyURL, "https://") {
+		writeError(w, http.StatusUnprocessableEntity, "company_url must start with http:// or https://")
+		return
+	}
+	job, err := dbGetJobByID(id)
+	if err != nil || job == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := dbUpdateJobCompanyURL(id, companyURL); err != nil {
+		log.Printf("✗ dbUpdateJobCompanyURL(%d) error: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "Failed to update company URL.")
+		return
+	}
+	// Sync to company_meta
+	if job.Company != "" && companyURL != "" {
+		if err := dbSyncCompanyURLToMeta(job.Company, companyURL); err != nil {
+			log.Printf("✗ dbSyncCompanyURLToMeta(%q) error: %v", job.Company, err)
+		} else {
+			log.Printf("✓ company_meta company_url synced for %q", job.Company)
+		}
+	}
+	log.Printf("✓ Job %d company_url updated to: %q", id, companyURL)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "company_url": companyURL})
 }
 
 func handleAnalyzeJob(w http.ResponseWriter, r *http.Request) {
@@ -1505,6 +1566,25 @@ func handleJobDetail_API(w http.ResponseWriter, r *http.Request) {
 			BetterFit:    comp.BetterFit,
 			BetterReason: comp.BetterReason,
 		}
+	}
+
+	// company_url: single source of truth is company_meta.
+	// Sync job → meta if meta is empty; always display from meta.
+	if job.Company != "" {
+		meta, _ := dbGetCompanyMeta(job.Company)
+		jobURL := strings.TrimSpace(job.CompanyURL)
+		metaURL := ""
+		if meta != nil {
+			metaURL = strings.TrimSpace(meta.CompanyURL)
+		}
+		if jobURL != "" && metaURL == "" {
+			if err := dbSyncCompanyURLToMeta(job.Company, jobURL); err != nil {
+				log.Printf("✗ dbSyncCompanyURLToMeta(%q) error: %v", job.Company, err)
+			} else {
+				metaURL = jobURL
+			}
+		}
+		job.CompanyURL = metaURL
 	}
 
 	writeJSON(w, http.StatusOK, JobDetailAPIResponse{
@@ -2163,7 +2243,7 @@ func handleCompanyMetaUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// URLs
-	for _, field := range []string{"glassdoor_url", "indeed_url", "bbb_url", "linkedin_url"} {
+	for _, field := range []string{"glassdoor_url", "indeed_url", "bbb_url", "linkedin_url", "company_url"} {
 		if v := strings.TrimSpace(r.FormValue(field)); v != "" {
 			if !strings.HasPrefix(v, "http") {
 				writeError(w, http.StatusUnprocessableEntity, field+" must start with http:// or https://")

@@ -2675,3 +2675,110 @@ func TestHandleUpdateJobCompany_RenamesCompanyMeta(t *testing.T) {
 		t.Errorf("expected glassdoor_rating=4.5, got %v", newMeta.GlassdoorRating)
 	}
 }
+
+// ── PATCH /api/jobs/{id}/company-url ─────────────────────────────────────────
+
+func TestHandleUpdateJobCompanyURL_SetsValue(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	id, _ := dbInsertJob("https://example.com/cu1", "Dev", "Co", "VA", "desc")
+	vals := url.Values{}
+	vals.Set("company_url", "https://www.co.com")
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/jobs/%d/company-url", id), strings.NewReader(vals.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handleUpdateJobCompanyURL(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleUpdateJobCompanyURL_InvalidReturns422(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	id, _ := dbInsertJob("https://example.com/cu2", "Dev", "Co", "VA", "desc")
+	vals := url.Values{}
+	vals.Set("company_url", "not-a-url")
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/jobs/%d/company-url", id), strings.NewReader(vals.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handleUpdateJobCompanyURL(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", w.Code)
+	}
+}
+
+func TestHandleUpdateJobCompanyURL_SyncsToMeta(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	id, _ := dbInsertJob("https://example.com/cu3", "Dev", "SyncCo", "VA", "desc")
+	vals := url.Values{}
+	vals.Set("company_url", "https://www.syncco.com")
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/jobs/%d/company-url", id), strings.NewReader(vals.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handleUpdateJobCompanyURL(w, r)
+	meta, _ := dbGetCompanyMeta("SyncCo")
+	if meta == nil || meta.CompanyURL != "https://www.syncco.com" {
+		t.Errorf("expected company_meta.company_url to be synced, got %v", meta)
+	}
+}
+
+func TestHandleUpdateJobCompanyURL_NotFoundReturns404(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	vals := url.Values{}
+	vals.Set("company_url", "https://x.com")
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPatch, "/api/jobs/99999/company-url", strings.NewReader(vals.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handleUpdateJobCompanyURL(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestHandleVettingAPI_MetaIncludesCompanyURL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+
+	dbInsertJob("https://example.com/urlco", "Dev", "URLCo", "VA", "desc")
+
+	if err := dbUpsertManualMeta("URLCo", map[string]interface{}{
+		"company_url": "https://www.urlco.com",
+	}); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/vetting", nil)
+	w := httptest.NewRecorder()
+	handleVettingAPI(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Companies []struct {
+			Company string                 `json:"company"`
+			Meta    map[string]interface{} `json:"meta"`
+		} `json:"companies"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var meta map[string]interface{}
+	for _, c := range body.Companies {
+		if c.Company == "URLCo" {
+			meta = c.Meta
+			break
+		}
+	}
+	if meta == nil {
+		t.Fatal("URLCo not found in response")
+	}
+	if meta["company_url"] != "https://www.urlco.com" {
+		t.Errorf("expected company_url=https://www.urlco.com, got %v", meta["company_url"])
+	}
+}

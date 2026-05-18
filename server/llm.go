@@ -488,7 +488,7 @@ func validateLLMOutput(result Analysis, jd, resume string) ValidationResult {
 		errs = append(errs, fmt.Sprintf("score %d out of range 1-5", result.Score))
 	}
 
-	if len(jd) > 500 && len(result.MatchedSkills) == 0 {
+	if len(jd) > 500 && len(result.MatchedSkills) == 0 && result.Score > 1 {
 		errs = append(errs, "no matched skills despite rich job description")
 	}
 

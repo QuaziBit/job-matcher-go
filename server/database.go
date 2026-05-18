@@ -51,6 +51,7 @@ func createSchema() error {
 		title           TEXT,
 		company         TEXT,
 		location        TEXT,
+		company_url     TEXT DEFAULT '',
 		raw_description TEXT,
 		scraped_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
@@ -146,6 +147,8 @@ func runMigrations() {
 		"ALTER TABLE company_meta ADD COLUMN indeed_url TEXT DEFAULT ''",
 		"ALTER TABLE company_meta ADD COLUMN indeed_rating REAL DEFAULT NULL",
 		"ALTER TABLE company_meta ADD COLUMN indeed_review_count INTEGER DEFAULT NULL",
+		"ALTER TABLE company_meta ADD COLUMN company_url TEXT DEFAULT ''",
+		"ALTER TABLE jobs ADD COLUMN company_url TEXT DEFAULT ''",
 	}
 	for _, m := range migrations {
 		_, _ = db.Exec(m)
@@ -362,8 +365,8 @@ func dbGetJobByID(id int64) (*Job, error) {
 	var j Job
 	var ts string
 	err := db.QueryRow(
-		`SELECT id, url, title, company, location, raw_description, scraped_at FROM jobs WHERE id = ?`, id,
-	).Scan(&j.ID, &j.URL, &j.Title, &j.Company, &j.Location, &j.RawDescription, &ts)
+		`SELECT id, url, title, company, location, COALESCE(company_url,''), raw_description, scraped_at FROM jobs WHERE id = ?`, id,
+	).Scan(&j.ID, &j.URL, &j.Title, &j.Company, &j.Location, &j.CompanyURL, &j.RawDescription, &ts)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -378,8 +381,8 @@ func dbGetJobByURL(u string) (*Job, error) {
 	var j Job
 	var ts string
 	err := db.QueryRow(
-		`SELECT id, url, title, company, location, raw_description, scraped_at FROM jobs WHERE url = ?`, u,
-	).Scan(&j.ID, &j.URL, &j.Title, &j.Company, &j.Location, &j.RawDescription, &ts)
+		`SELECT id, url, title, company, location, COALESCE(company_url,''), raw_description, scraped_at FROM jobs WHERE url = ?`, u,
+	).Scan(&j.ID, &j.URL, &j.Title, &j.Company, &j.Location, &j.CompanyURL, &j.RawDescription, &ts)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -701,6 +704,7 @@ type CompanyMeta struct {
 	IndeedURL            string  `json:"indeed_url"`
 	IndeedRating         float64 `json:"indeed_rating"`
 	IndeedReviewCount    int     `json:"indeed_review_count"`
+	CompanyURL           string  `json:"company_url"`
 	CrawledAt            string  `json:"crawled_at"`
 	LLMAssessment        string  `json:"llm_assessment,omitempty"`
 	LLMRiskLevel         string  `json:"llm_risk_level,omitempty"`
@@ -717,6 +721,7 @@ func dbGetCompanyMeta(companyName string) (*CompanyMeta, error) {
 		       COALESCE(linkedin_url,''), COALESCE(linkedin_employee_count,''), COALESCE(linkedin_founded,''),
 		       COALESCE(bbb_url,''), COALESCE(bbb_rating,''),
 		       COALESCE(indeed_url,''), COALESCE(indeed_rating,0), COALESCE(indeed_review_count,0),
+		       COALESCE(company_url,''),
 		       COALESCE(crawled_at,''),
 		       llm_assessment, llm_risk_level, llm_signals, llm_provider, llm_model, llm_assessed_at
 		FROM company_meta WHERE company_name = ?`, companyName)
@@ -728,6 +733,7 @@ func dbGetCompanyMeta(companyName string) (*CompanyMeta, error) {
 		&m.LinkedInURL, &m.LinkedInEmployees, &m.LinkedInFounded,
 		&m.BBBURL, &m.BBBRating,
 		&m.IndeedURL, &m.IndeedRating, &m.IndeedReviewCount,
+		&m.CompanyURL,
 		&m.CrawledAt,
 		&llmAssessment, &llmRisk, &llmSignals, &llmProvider, &llmModel, &llmAssessedAt,
 	)
@@ -853,6 +859,7 @@ func dbUpsertSnippetMeta(companyName string, fields map[string]interface{}) erro
 		"indeed_url", "indeed_rating", "indeed_review_count",
 		"bbb_url", "bbb_rating",
 		"linkedin_url", "linkedin_employee_count", "linkedin_founded",
+		"company_url",
 	} {
 		if v, ok := fields[col]; ok {
 			cols = append(cols, col)
@@ -901,6 +908,36 @@ func dbRenameCompanyMeta(oldName, newName string) error {
 	_, err := db.Exec(
 		"UPDATE company_meta SET company_name = ? WHERE company_name = ?",
 		newName, oldName,
+	)
+	return err
+}
+
+// dbGetJobCompanyURL returns the company_url from the jobs table for a given job ID.
+func dbGetJobCompanyURL(jobID int64) (string, error) {
+	var url string
+	err := db.QueryRow("SELECT COALESCE(company_url,'') FROM jobs WHERE id = ?", jobID).Scan(&url)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return url, err
+}
+
+// dbUpdateJobCompanyURL saves company_url on the jobs row.
+func dbUpdateJobCompanyURL(jobID int64, companyURL string) error {
+	_, err := db.Exec("UPDATE jobs SET company_url = ? WHERE id = ?", companyURL, jobID)
+	return err
+}
+
+// dbSyncCompanyURLToMeta writes company_url to company_meta without touching other fields.
+func dbSyncCompanyURLToMeta(companyName, companyURL string) error {
+	if companyName == "" || companyURL == "" {
+		return nil
+	}
+	_, err := db.Exec(`
+		INSERT INTO company_meta (company_name, company_url)
+		VALUES (?, ?)
+		ON CONFLICT(company_name) DO UPDATE SET company_url = excluded.company_url`,
+		companyName, companyURL,
 	)
 	return err
 }

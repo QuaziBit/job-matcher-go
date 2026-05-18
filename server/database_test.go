@@ -1657,3 +1657,79 @@ func TestDBRenameCompanyMeta_NoOpWhenNoRow(t *testing.T) {
 		t.Errorf("expected no error renaming nonexistent row, got: %v", err)
 	}
 }
+
+func TestJobsTableHasCompanyURLColumn(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	rows, err := db.Query("PRAGMA table_info(jobs)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull int
+		var dflt interface{}
+		var pk int
+		rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk)
+		if name == "company_url" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected company_url column in jobs table")
+	}
+}
+
+func TestDBSyncCompanyURLToMeta(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	if err := dbSyncCompanyURLToMeta("SyncCo", "https://www.syncco.com"); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	meta, _ := dbGetCompanyMeta("SyncCo")
+	if meta == nil || meta.CompanyURL != "https://www.syncco.com" {
+		t.Errorf("expected company_url to be synced, got %v", meta)
+	}
+}
+
+func TestDBSyncCompanyURLToMeta_PreservesOtherFields(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	// Seed with glassdoor rating
+	if err := dbUpsertSnippetMeta("PreserveCo", map[string]interface{}{
+		"glassdoor_rating": 4.2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Sync only company_url
+	if err := dbSyncCompanyURLToMeta("PreserveCo", "https://www.preserve.com"); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := dbGetCompanyMeta("PreserveCo")
+	if meta == nil {
+		t.Fatal("expected meta row")
+	}
+	if meta.GlassdoorRating != 4.2 {
+		t.Errorf("expected glassdoor_rating=4.2 preserved, got %v", meta.GlassdoorRating)
+	}
+	if meta.CompanyURL != "https://www.preserve.com" {
+		t.Errorf("expected company_url set, got %q", meta.CompanyURL)
+	}
+}
+
+func TestDBUpsertManualMeta_AcceptsCompanyURL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	if err := dbUpsertManualMeta("URLTestCo", map[string]interface{}{
+		"company_url": "https://www.urltestco.com",
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	meta, _ := dbGetCompanyMeta("URLTestCo")
+	if meta == nil || meta.CompanyURL != "https://www.urltestco.com" {
+		t.Errorf("expected company_url to be saved, got %v", meta)
+	}
+}

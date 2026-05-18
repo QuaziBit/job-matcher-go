@@ -24,6 +24,7 @@ type Job struct {
 	Title          string `json:"title"`
 	Company        string `json:"company"`
 	Location       string `json:"location"`
+	CompanyURL     string `json:"company_url"`
 	RawDescription string `json:"raw_description"`
 	ScrapedAt      string `json:"scraped_at"`
 }

@@ -506,7 +506,7 @@ func TestParseLLMResponse_SuggestionsEmptyIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if a.Suggestions != nil && len(a.Suggestions) != 0 {
+	if len(a.Suggestions) != 0 {
 		t.Errorf("expected empty suggestions, got %d", len(a.Suggestions))
 	}
 }
