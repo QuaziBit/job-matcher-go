@@ -677,6 +677,11 @@ func handleSavePreview(w http.ResponseWriter, r *http.Request) {
 	title := strings.TrimSpace(r.FormValue("title"))
 	company := strings.TrimSpace(r.FormValue("company"))
 	location := strings.TrimSpace(r.FormValue("location"))
+	companyURL := strings.TrimSpace(r.FormValue("company_url"))
+	// Silently ignore invalid company_url
+	if companyURL != "" && !strings.HasPrefix(companyURL, "http://") && !strings.HasPrefix(companyURL, "https://") {
+		companyURL = ""
+	}
 	description := cleanText(r.FormValue("description"))
 
 	if jobURL == "" {
@@ -708,6 +713,17 @@ func handleSavePreview(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("dbInsertJob error: %v", err))
 		return
+	}
+	// Save and sync company_url
+	if companyURL != "" {
+		if err := dbUpdateJobCompanyURL(id, companyURL); err != nil {
+			log.Printf("✗ dbUpdateJobCompanyURL(%d) error: %v", id, err)
+		}
+		if company != "" {
+			if err := dbSyncCompanyURLToMeta(company, companyURL); err != nil {
+				log.Printf("✗ dbSyncCompanyURLToMeta(%q) error: %v", company, err)
+			}
+		}
 	}
 	log.Printf("✓ Preview job saved id=%d: %q", id, title)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"job_id": id, "title": title, "company": company})

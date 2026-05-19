@@ -2782,3 +2782,48 @@ func TestHandleVettingAPI_MetaIncludesCompanyURL(t *testing.T) {
 		t.Errorf("expected company_url=https://www.urlco.com, got %v", meta["company_url"])
 	}
 }
+
+func TestHandleSavePreview_SavesCompanyURL(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	vals := url.Values{}
+	vals.Set("url", "https://example.com/preview-cu")
+	vals.Set("title", "Dev")
+	vals.Set("company", "PreviewCo")
+	vals.Set("company_url", "https://www.previewco.com")
+	vals.Set("description", strings.Repeat("x", 100))
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/jobs/save-preview", strings.NewReader(vals.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handleSavePreview(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	meta, _ := dbGetCompanyMeta("PreviewCo")
+	if meta == nil || meta.CompanyURL != "https://www.previewco.com" {
+		t.Errorf("expected company_url synced to meta, got %v", meta)
+	}
+}
+
+func TestHandleSavePreview_InvalidCompanyURLIgnored(t *testing.T) {
+	cleanup := setupTestDB(t)
+	defer cleanup()
+	vals := url.Values{}
+	vals.Set("url", "https://example.com/preview-bad")
+	vals.Set("title", "Dev")
+	vals.Set("company", "BadURLCo")
+	vals.Set("company_url", "not-a-url")
+	vals.Set("description", strings.Repeat("x", 100))
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/jobs/save-preview", strings.NewReader(vals.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handleSavePreview(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d — %s", w.Code, w.Body.String())
+	}
+	// company_url should not be synced
+	meta, _ := dbGetCompanyMeta("BadURLCo")
+	if meta != nil && meta.CompanyURL != "" {
+		t.Errorf("expected company_url empty for invalid URL, got %q", meta.CompanyURL)
+	}
+}
